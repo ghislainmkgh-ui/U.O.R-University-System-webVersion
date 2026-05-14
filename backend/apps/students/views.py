@@ -1,0 +1,290 @@
+"""Student management endpoints."""
+from __future__ import annotations
+
+import base64
+import mimetypes
+import os
+import re
+from pathlib import Path
+from uuid import uuid4
+
+import numpy as np
+from django.conf import settings
+from django.http import FileResponse, HttpRequest, HttpResponse, JsonResponse
+
+from apps.common.decorators import admin_required, api_methods
+from apps.common.legacy import services
+from apps.common.responses import json_error, json_ok, parse_json
+from apps.common.serialization import add_photo_flags, to_jsonable
+
+
+def _student_service():
+    return services()["student"]
+
+
+def _auth_service():
+    return services()["auth"]
+
+
+def _finance_service():
+    return services()["finance"]
+
+
+@api_methods("GET", "POST")
+@admin_required
+def students(request: HttpRequest) -> JsonResponse:
+    if request.method == "GET":
+        rows = _student_service().get_all_students_with_finance() or []
+        return json_ok([add_photo_flags(row) for row in rows])
+
+    payload, error = parse_json(request)
+    if error:
+        return error
+    return _create_student(payload)
+
+
+@api_methods("GET", "PATCH", "DELETE")
+@admin_required
+def student_detail(request: HttpRequest, student_id: int) -> JsonResponse:
+    svc = _student_service()
+    if request.method == "GET":
+        student = svc.get_student_with_academics(student_id)
+        if not student:
+            return json_error("Etudiant introuvable", status=404, code="student_not_found")
+        return json_ok(add_photo_flags(student))
+
+    if request.method == "DELETE":
+        student = svc.get_student_with_academics(student_id)
+        if not student:
+            return json_error("Etudiant introuvable", status=404, code="student_not_found")
+        ok = svc.deactivate_student(student.get("student_number"))
+        if not ok:
+            return json_error("Impossible de desactiver l'etudiant", status=400, code="deactivate_failed")
+        return json_ok({"message": "Etudiant desactive"})
+
+    payload, error = parse_json(request)
+    if error:
+        return error
+
+    update_data = _student_update_payload(payload)
+    try:
+        photo_path, photo_blob, face_encoding = _extract_photo_payload(payload, student_id=student_id)
+    except ValueError as exc:
+        return json_error(str(exc), status=400, code="invalid_photo")
+    if photo_path:
+        update_data["passport_photo_path"] = photo_path
+        update_data["passport_photo_blob"] = photo_blob
+
+    if not update_data:
+        return json_error("Aucune donnee a mettre a jour", status=400, code="empty_update")
+
+    ok = svc.update_student(student_id, update_data)
+    if not ok:
+        return json_error("Mise a jour impossible", status=400, code="update_failed")
+    if face_encoding is not None:
+        svc.update_face_encoding(student_id, face_encoding)
+    return json_ok(svc.get_student_with_academics(student_id))
+
+
+@api_methods("GET")
+@admin_required
+def student_photo(request: HttpRequest, student_id: int):
+    from core.database.connection import DatabaseConnection
+
+    rows = DatabaseConnection().execute_query(
+        "SELECT passport_photo_path, passport_photo_blob FROM student WHERE id = %s LIMIT 1",
+        (student_id,),
+    )
+    if not rows:
+        return json_error("Photo introuvable", status=404, code="photo_not_found")
+    row = rows[0]
+    blob = row.get("passport_photo_blob")
+    if blob:
+        return HttpResponse(bytes(blob), content_type="image/jpeg")
+    path = row.get("passport_photo_path")
+    if path and os.path.exists(path):
+        content_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
+        return FileResponse(open(path, "rb"), content_type=content_type)
+    return json_error("Photo introuvable", status=404, code="photo_not_found")
+
+
+@api_methods("GET", "POST")
+@admin_required
+def faculties(request: HttpRequest) -> JsonResponse:
+    svc = _student_service()
+    if request.method == "GET":
+        return json_ok(svc.get_faculties() or [])
+    payload, error = parse_json(request)
+    if error:
+        return error
+    faculty_id = svc.create_faculty(str(payload.get("name") or "").strip(), payload.get("code"))
+    if not faculty_id:
+        return json_error("Creation faculte impossible", status=400, code="faculty_create_failed")
+    return json_ok({"id": faculty_id}, status=201)
+
+
+@api_methods("GET", "POST")
+@admin_required
+def departments(request: HttpRequest) -> JsonResponse:
+    svc = _student_service()
+    if request.method == "GET":
+        faculty_id = request.GET.get("faculty_id")
+        if faculty_id:
+            return json_ok(svc.get_departments_by_faculty(int(faculty_id)) or [])
+        return json_ok([])
+    payload, error = parse_json(request)
+    if error:
+        return error
+    department_id = svc.create_department(
+        str(payload.get("name") or "").strip(),
+        int(payload.get("faculty_id") or 0),
+        payload.get("code"),
+    )
+    if not department_id:
+        return json_error("Creation departement impossible", status=400, code="department_create_failed")
+    return json_ok({"id": department_id}, status=201)
+
+
+@api_methods("GET", "POST")
+@admin_required
+def promotions(request: HttpRequest) -> JsonResponse:
+    svc = _student_service()
+    if request.method == "GET":
+        department_id = request.GET.get("department_id")
+        if department_id:
+            return json_ok(svc.get_promotions_by_department(int(department_id)) or [])
+        return json_ok(svc.get_promotions_with_fees() or [])
+    payload, error = parse_json(request)
+    if error:
+        return error
+    promotion_id = svc.create_promotion(
+        str(payload.get("name") or "").strip(),
+        int(payload.get("department_id") or 0),
+        payload.get("year"),
+    )
+    if not promotion_id:
+        return json_error("Creation promotion impossible", status=400, code="promotion_create_failed")
+    return json_ok({"id": promotion_id}, status=201)
+
+
+def _create_student(payload: dict) -> JsonResponse:
+    from core.models.student import Student as LegacyStudent
+
+    required = ["student_number", "firstname", "lastname", "email", "promotion_id"]
+    missing = [key for key in required if not payload.get(key)]
+    if missing:
+        return json_error(f"Champs requis manquants: {', '.join(missing)}", status=400, code="missing_fields")
+
+    try:
+        photo_path, photo_blob, face_encoding = _extract_photo_payload(payload, student_id=0, require_photo=True)
+    except ValueError as exc:
+        return json_error(str(exc), status=400, code="invalid_photo")
+    student = LegacyStudent(
+        student_number=str(payload["student_number"]).strip(),
+        firstname=str(payload["firstname"]).strip(),
+        lastname=str(payload["lastname"]).strip(),
+        email=str(payload["email"]).strip(),
+        phone_number=str(payload.get("phone_number") or "").strip() or None,
+        promotion_id=int(payload["promotion_id"]),
+        passport_photo_path=photo_path,
+        passport_photo_blob=photo_blob,
+        academic_year_id=payload.get("academic_year_id"),
+    )
+    student_id = _auth_service().register_student_with_face(student, None, face_encoding)
+    if not student_id:
+        return json_error(_auth_service().get_last_error() or "Inscription impossible", status=400)
+
+    _finance_service().create_finance_profile(
+        student_id,
+        payload.get("threshold_required"),
+        payload.get("academic_year_id"),
+    )
+    created = _student_service().get_student_with_academics(student_id)
+    return json_ok(add_photo_flags(created or {"id": student_id}), status=201)
+
+
+def _student_update_payload(payload: dict) -> dict:
+    allowed = {
+        "student_number",
+        "firstname",
+        "lastname",
+        "email",
+        "phone_number",
+        "promotion_id",
+        "academic_year_id",
+    }
+    return {key: value for key, value in payload.items() if key in allowed}
+
+
+def _extract_photo_payload(
+    payload: dict,
+    *,
+    student_id: int,
+    require_photo: bool = False,
+) -> tuple[str | None, bytes | None, bytes | None]:
+    photo_b64 = payload.get("photo_base64")
+    if not photo_b64:
+        if require_photo:
+            raise ValueError(
+                "Photo passeport obligatoire. Ajoutez une photo nette, individuelle et compatible avec la reconnaissance faciale."
+            )
+        return None, None, None
+
+    raw = str(photo_b64)
+    if "," in raw:
+        raw = raw.split(",", 1)[1]
+    try:
+        photo_blob = base64.b64decode(raw, validate=True)
+    except Exception as exc:
+        raise ValueError("Photo base64 invalide") from exc
+    ext = _clean_ext(payload.get("photo_extension") or ".jpg")
+    student_number = str(payload.get("student_number") or f"student_{student_id or 'new'}").strip()
+    safe_name = re.sub(r"[^A-Za-z0-9_-]", "_", student_number) or f"student_{student_id or 'new'}"
+    storage_dir = Path(settings.LEGACY_STORAGE_ROOT) / "student_photos"
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    temp_path = storage_dir / f".pending_{safe_name}_{uuid4().hex}{ext}"
+    final_path = storage_dir / f"{safe_name}_{uuid4().hex}{ext}"
+
+    try:
+        temp_path.write_bytes(photo_blob)
+        face_encoding = _validated_face_encoding_from_path(str(temp_path), student_id or 1)
+        temp_path.replace(final_path)
+    except ValueError:
+        temp_path.unlink(missing_ok=True)
+        raise
+    except Exception as exc:
+        temp_path.unlink(missing_ok=True)
+        raise ValueError("Impossible de sauvegarder la photo de l'etudiant") from exc
+
+    return str(final_path), photo_blob, face_encoding
+
+
+def _validated_face_encoding_from_path(photo_path: str, student_id: int) -> bytes:
+    try:
+        from app.services.auth.face_recognition_service import FaceRecognitionService
+
+        face_service = FaceRecognitionService()
+        if not face_service.is_available():
+            raise ValueError("Service de reconnaissance faciale indisponible. La photo ne peut pas etre validee.")
+        is_valid, validation_message = face_service.validate_passport_photo(photo_path)
+        if not is_valid:
+            raise ValueError(validation_message)
+        encoding = face_service.register_face(photo_path, int(student_id))
+        if isinstance(encoding, np.ndarray):
+            return encoding.tobytes()
+    except ValueError:
+        raise
+    except RuntimeError as exc:
+        raise ValueError("Service de reconnaissance faciale indisponible. La photo ne peut pas etre validee.") from exc
+    except Exception as exc:
+        raise ValueError("Impossible de valider la photo avec la reconnaissance faciale.") from exc
+    raise ValueError("Photo invalide: un visage unique, net et bien cadre est obligatoire.")
+
+
+def _clean_ext(value: str) -> str:
+    ext = str(value or ".jpg").lower().strip()
+    if not ext.startswith("."):
+        ext = f".{ext}"
+    if ext not in {".jpg", ".jpeg", ".png", ".bmp"}:
+        raise ValueError("Format photo non supporte. Utilisez JPG, JPEG, PNG ou BMP.")
+    return ext

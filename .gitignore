@@ -1,0 +1,15 @@
+.env
+.env.local
+.env.*.local
+venv/
+backend/.env
+frontend/.env
+frontend/node_modules/
+frontend/dist/
+logs/
+storage/
+*.log
+backend/*.log
+backend/__pycache__/
+backend/**/__pycache__/
+backend/legacy_src/**/__pycache__/
