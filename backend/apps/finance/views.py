@@ -102,15 +102,102 @@ def academic_years(request: HttpRequest) -> JsonResponse:
     payload, error = parse_json(request)
     if error:
         return error
+    year_name = str(payload.get("year_name") or payload.get("name") or "").strip()
+    threshold = _decimal(payload.get("threshold_amount") or 0)
+    final_fee = _decimal(payload.get("final_fee") or 0)
+    partial_days = _safe_int(payload.get("partial_valid_days"), default=30, minimum=1, maximum=365)
+    is_active = _bool_or_none(payload.get("is_active"))
+    start_date = _date_or_none(payload.get("start_date"))
+    end_date = _date_or_none(payload.get("end_date"))
+    if not year_name:
+        return json_error("Nom de l'annee academique requis", status=400, code="missing_year_name")
+    if payload.get("start_date") and start_date is None:
+        return json_error("Date de debut invalide", status=400, code="invalid_year_dates")
+    if payload.get("end_date") and end_date is None:
+        return json_error("Date de fin invalide", status=400, code="invalid_year_dates")
+    if threshold is None or final_fee is None or threshold < 0 or final_fee < 0:
+        return json_error("Seuil et frais valides requis", status=400, code="invalid_year_financials")
+    if threshold > final_fee:
+        return json_error("Le seuil ne peut pas depasser les frais academiques", status=400, code="threshold_over_fee")
+    if start_date and end_date and start_date > end_date:
+        return json_error("La date de debut doit etre avant la date de fin", status=400, code="invalid_year_dates")
     year_id = svc.create_year_simple(
-        str(payload.get("year_name") or payload.get("name") or "").strip(),
-        threshold_amount=float(payload.get("threshold_amount") or 0),
-        final_fee=float(payload.get("final_fee") or 0),
-        partial_valid_days=int(payload.get("partial_valid_days") or 30),
+        year_name,
+        threshold_amount=float(threshold),
+        final_fee=float(final_fee),
+        partial_valid_days=partial_days,
+        is_active=True if is_active is None else is_active,
+        start_date=start_date,
+        end_date=end_date,
     )
     if not year_id:
         return json_error("Creation annee academique impossible", status=400, code="year_create_failed")
     return json_ok({"academic_year_id": year_id}, status=201)
+
+
+@api_methods("PATCH", "POST")
+@super_admin_required
+def academic_year_detail(request: HttpRequest, academic_year_id: int) -> JsonResponse:
+    svc = _academic()
+    current = svc.get_year_by_id(academic_year_id)
+    if not current:
+        return json_error("Annee academique introuvable", status=404, code="year_not_found")
+
+    payload, error = parse_json(request)
+    if error:
+        return error
+
+    has_financials = any(key in payload for key in ("threshold_amount", "final_fee", "partial_valid_days"))
+    if has_financials:
+        threshold = _decimal(payload.get("threshold_amount", current.get("threshold_amount")))
+        final_fee = _decimal(payload.get("final_fee", current.get("final_fee")))
+        partial_days = _safe_int(
+            payload.get("partial_valid_days", current.get("partial_valid_days") or 30),
+            default=30,
+            minimum=1,
+            maximum=365,
+        )
+        if threshold is None or final_fee is None or threshold < 0 or final_fee < 0:
+            return json_error("Seuil et frais valides requis", status=400, code="invalid_year_financials")
+        if threshold > final_fee:
+            return json_error("Le seuil ne peut pas depasser les frais academiques", status=400, code="threshold_over_fee")
+        if not _finance().update_financial_thresholds(academic_year_id, threshold, final_fee, partial_days):
+            return json_error("Mise a jour de l'annee impossible", status=400, code="year_update_failed")
+
+    year_name = None
+    start_date = None
+    end_date = None
+    if "year_name" in payload or "name" in payload:
+        year_name = str(payload.get("year_name") or payload.get("name") or "").strip()
+        if not year_name:
+            return json_error("Nom de l'annee academique requis", status=400, code="missing_year_name")
+    if "start_date" in payload:
+        start_date = _date_or_none(payload.get("start_date"))
+        if payload.get("start_date") and start_date is None:
+            return json_error("Date de debut invalide", status=400, code="invalid_year_dates")
+    if "end_date" in payload:
+        end_date = _date_or_none(payload.get("end_date"))
+        if payload.get("end_date") and end_date is None:
+            return json_error("Date de fin invalide", status=400, code="invalid_year_dates")
+    compare_start = start_date if "start_date" in payload else _date_or_none(current.get("start_date"))
+    compare_end = end_date if "end_date" in payload else _date_or_none(current.get("end_date"))
+    if compare_start and compare_end and compare_start > compare_end:
+        return json_error("La date de debut doit etre avant la date de fin", status=400, code="invalid_year_dates")
+
+    is_active = _bool_or_none(payload.get("is_active")) if "is_active" in payload else None
+    if year_name is not None or is_active is not None or "start_date" in payload or "end_date" in payload:
+        if not svc.update_year_metadata(
+            academic_year_id,
+            year_name=year_name,
+            is_active=is_active,
+            start_date=start_date,
+            end_date=end_date,
+            start_date_provided="start_date" in payload,
+            end_date_provided="end_date" in payload,
+        ):
+            return json_error("Mise a jour de l'annee impossible", status=400, code="year_update_failed")
+
+    return json_ok(svc.get_year_by_id(academic_year_id) or {})
 
 
 @api_methods("PATCH", "POST")
@@ -239,6 +326,30 @@ def _safe_int(value, *, default: int, minimum: int, maximum: int) -> int:
         return max(minimum, min(maximum, int(value)))
     except Exception:
         return default
+
+
+def _date_or_none(value) -> date | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value))
+    except ValueError:
+        return None
+
+
+def _bool_or_none(value) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    raw = str(value).strip().lower()
+    if raw in {"1", "true", "yes", "oui", "active", "actif"}:
+        return True
+    if raw in {"0", "false", "no", "non", "inactive", "inactif"}:
+        return False
+    return None
 
 
 def _access_code_resend_message(detail: str) -> str:

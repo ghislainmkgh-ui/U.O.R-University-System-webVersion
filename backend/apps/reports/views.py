@@ -7,7 +7,7 @@ from apps.common.legacy import services
 from apps.common.responses import json_ok
 from apps.common.serialization import add_photo_flags
 
-from .exports import csv_response, wants_csv
+from .exports import export_response, requested_format
 
 
 def _dashboard():
@@ -35,7 +35,7 @@ def summary(request: HttpRequest) -> JsonResponse:
                 "finance",
                 "access_logs",
             ],
-            "available_formats": ["json", "csv"],
+            "available_formats": ["json", "csv", "excel", "pdf"],
         }
     )
 
@@ -48,8 +48,9 @@ def students_report(request: HttpRequest):
     rows = _filter_students(rows, request.GET.get("status"))
     rows = _filter_by_ids(rows, request)
 
-    if wants_csv(request):
-        return csv_response("uor_students_report.csv", rows, _student_columns())
+    export = export_response("uor_students_report", rows, _student_columns(), requested_format(request))
+    if export:
+        return export
     return json_ok({"count": len(rows), "students": rows})
 
 
@@ -62,8 +63,9 @@ def finance_report(request: HttpRequest):
     rows = _filter_students(rows, request.GET.get("status"))
     rows = _filter_by_ids(rows, request)
 
-    if wants_csv(request):
-        return csv_response("uor_finance_report.csv", rows, _finance_columns())
+    export = export_response("uor_finance_report", rows, _finance_columns(), requested_format(request))
+    if export:
+        return export
     return json_ok({"count": len(rows), "students": rows})
 
 
@@ -75,8 +77,9 @@ def access_logs_report(request: HttpRequest):
     rows = [add_photo_flags(row) for row in rows]
     rows = _filter_access_logs(rows, request.GET.get("status"))
 
-    if wants_csv(request):
-        return csv_response("uor_access_logs_report.csv", rows, _access_log_columns())
+    export = export_response("uor_access_logs_report", rows, _access_log_columns(), requested_format(request))
+    if export:
+        return export
     return json_ok({"count": len(rows), "access_logs": rows})
 
 

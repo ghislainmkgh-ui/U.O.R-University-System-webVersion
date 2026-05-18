@@ -398,9 +398,9 @@ function LoginDialog({ title, body, children, onClose }) {
 function errorNotice(err, fallbackCode) {
   const code = err?.payload?.code || fallbackCode;
   const loginMessages = {
-    invalid_credentials: "Identifiant ou mot de passe incorrect. Verifiez vos informations puis reessayez.",
+    invalid_credentials: "Identifiant ou mot de passe incorrect. Verifiez vos informations puis réessayez.",
     missing_credentials: "Identifiant et mot de passe requis.",
-    login_failed: "Connexion impossible. Verifiez vos informations puis reessayez.",
+    login_failed: "Connexion impossible. Vérifiez vos informations puis réessayez.",
   };
   const message = loginMessages[code] || cleanLoginError(err?.message) || "Une erreur est survenue.";
   console.error("[UOR Web]", code, { status: err?.status, payload: err?.payload });
@@ -410,20 +410,20 @@ function errorNotice(err, fallbackCode) {
 function cleanLoginError(message) {
   const raw = String(message || "").trim();
   if (/^invalid credentials$/i.test(raw)) {
-    return "Identifiant ou mot de passe incorrect. Verifiez vos informations puis reessayez.";
+    return "Identifiant ou mot de passe incorrect. Vérifiez vos informations puis reessayez.";
   }
   if (/^please enter credentials$/i.test(raw)) {
-    return "Identifiant et mot de passe requis.";
+    return "Identifiant et mot de passe réquis.";
   }
   return raw;
 }
 
 function oauthErrorMessage(code, language) {
   const fr = {
-    oauth_not_configured: "Connexion sociale non configuree sur le serveur.",
-    oauth_email_mismatch: "L'email du fournisseur ne correspond pas a l'email saisi.",
+    oauth_not_configured: "Connexion sociale non configurée sur le serveur.",
+    oauth_email_mismatch: "L'email du fournisseur ne correspond pas au l'email saisi.",
     oauth_local_account_missing: "Aucun compte local n'est associe a cet email.",
-    oauth_state_invalid: "La session OAuth a expire. Reessayez.",
+    oauth_state_invalid: "La session OAuth a expirée. Réessayez.",
   };
   const en = {
     oauth_not_configured: "Social login is not configured on the server.",

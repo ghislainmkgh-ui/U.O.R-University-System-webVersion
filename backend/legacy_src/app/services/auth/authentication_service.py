@@ -1068,6 +1068,7 @@ class AuthenticationService:
             add_column("student_number", student.student_number)
             add_column("firstname", student.firstname)
             add_column("lastname", student.lastname)
+            add_column("postnom", getattr(student, "postnom", None))
             add_column("email", student.email)
             add_column("phone_number", student.phone_number)
             add_column("promotion_id", student.promotion_id)

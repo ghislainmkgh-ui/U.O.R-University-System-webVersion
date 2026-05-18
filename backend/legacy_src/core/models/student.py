@@ -5,15 +5,16 @@ from core.models.base_model import BaseModel
 class Student(BaseModel):
     """Modèle pour les Étudiants"""
     
-    def __init__(self, student_number: str, firstname: str, lastname: str, 
+    def __init__(self, student_number: str, firstname: str, lastname: str,
                  email: str, promotion_id: int, phone_number: str = None,
                  passport_photo_path: str = None, passport_photo_blob: bytes = None,
-                 academic_year_id: int = None):
+                 academic_year_id: int = None, postnom: str = None):
         super().__init__()
         self.id: int = None
         self.student_number: str = student_number
         self.firstname: str = firstname
         self.lastname: str = lastname
+        self.postnom: str = postnom
         self.email: str = email
         self.phone_number: str = phone_number
         self.promotion_id: int = promotion_id
@@ -27,4 +28,4 @@ class Student(BaseModel):
     @property
     def fullname(self) -> str:
         """Retourne le nom complet de l'étudiant"""
-        return f"{self.firstname} {self.lastname}"
+        return " ".join(part for part in [self.lastname, self.postnom, self.firstname] if part)

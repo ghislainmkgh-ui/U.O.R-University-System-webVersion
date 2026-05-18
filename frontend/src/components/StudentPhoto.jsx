@@ -6,7 +6,7 @@ export function StudentPhoto({ student, size = "medium" }) {
   const hasPhoto = Boolean(student?.has_photo || student?.passport_photo_path);
   const studentId = student?.id || student?.student_id;
   const [src, setSrc] = useState("");
-  const initials = `${student?.firstname?.[0] || ""}${student?.lastname?.[0] || ""}`.trim() || "U";
+  const initials = `${student?.prenom?.[0] || student?.firstname?.[0] || ""}${student?.nom?.[0] || student?.lastname?.[0] || ""}`.trim() || "U";
 
   useEffect(() => {
     let objectUrl = "";

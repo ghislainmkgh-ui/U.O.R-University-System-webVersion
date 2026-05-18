@@ -1,85 +1,140 @@
-# U.O.R Web App Migration
+# U.O.R University System - Web Version
 
-Migration progressive de l'application desktop vers une architecture web.
+Version web du systeme de gestion universitaire U.O.R. Cette application reprend les fonctions principales de la version desktop dans une architecture web autonome, avec un backend Django et un frontend React.
 
-Objectif actuel: demarrer par un backend Django isole, sans supprimer ni modifier
-l'application desktop existante. Le dossier `Web_app_migration` doit rester
-autonome: configuration web, environnement Python, frontend et stockage runtime
-vivent dans ce dossier.
+## Apercu
 
-Le cahier des charges de la migration est dans
-[`MIGRATION_BRIEF.md`](MIGRATION_BRIEF.md). Toute modification importante doit
-respecter ce document.
+L'application permet de gerer les etudiants, les annees academiques, les paiements, les periodes d'examens, les demandes d'acces administrateur, les transferts et la validation d'acces par camera/ESP32.
 
-Le statut backend est dans [`backend/BACKEND_STATUS.md`](backend/BACKEND_STATUS.md)
-et le contrat API pour le frontend est dans
-[`backend/API_REFERENCE.md`](backend/API_REFERENCE.md).
+Objectif important du projet: le dossier `Web_app_migration` doit rester autonome. Les dependances, configurations, scripts, fichiers runtime et copies de services necessaires a la version web doivent rester dans ce dossier.
+
+## Fonctionnalites
+
+- Authentification des utilisateurs avec restauration de la derniere page ouverte.
+- Tableau de bord web responsive avec indicateurs et graphiques.
+- Gestion des etudiants par faculte, departement, promotion et annee academique active.
+- Ajout et modification d'etudiants avec photo, validation de visage et messages clairs pour l'utilisateur.
+- Gestion des annees academiques avec une seule annee active a la fois.
+- Copie d'etudiants d'une annee academique vers une autre sans supprimer les anciens dossiers.
+- Configuration des frais et seuils par promotion.
+- Historique financier structure par faculte, departement et promotion.
+- Gestion des periodes d'examens.
+- Validation/rejet des demandes d'acces administrateur par le super admin.
+- Serveur local pour camera et ESP32 demarre avec le backend afin d'eviter les requetes echouees.
+- Interface avec theme et langue configurables.
+
+## Technologies
+
+```text
+Backend   Django 5, Django REST style views, MySQL, JWT, OpenCV, face-recognition
+Frontend  React 19, Vite, React Router, lucide-react
+Runtime   PowerShell scripts, local storage web, services camera/ESP32
+```
 
 ## Structure
 
 ```text
 Web_app_migration/
-  backend/   API Django + pont vers les services metier existants
-  frontend/  futur client React
+  backend/                 API Django et logique web
+  backend/legacy_src/      Copie locale des services metier utiles au web
+  frontend/                Application React/Vite
+  logs/                    Journaux runtime web
+  storage/                 Fichiers generes et uploads web
+  .env.example             Exemple de configuration backend web
+  start_backend.ps1        Script de demarrage backend
+  start_frontend.ps1       Script de demarrage frontend
 ```
 
-Le backend reutilise la base MySQL actuelle (`uor_university`) et declare les
-modeles Django en `managed = False`. Django ne doit donc pas creer ou remplacer
-les tables metier existantes.
+## Prerequis
+
+- Python 3.11 ou plus recent.
+- Node.js 20 ou plus recent.
+- MySQL avec la base utilisee par le projet.
+- Git.
+
+Pour la reconnaissance faciale, certaines installations Windows peuvent demander les dependances natives de `face-recognition`/`dlib`.
 
 ## Configuration
 
-Le desktop conserve son `.env` a la racine du projet. La migration web ne charge
-pas ce fichier: elle utilise son propre fichier:
-
-```text
-Web_app_migration/.env
-```
-
-Le backend Django charge les variables web dans cet ordre:
-
-1. `Web_app_migration/.env`, configuration principale web;
-2. `Web_app_migration/backend/.env`, surcharge locale backend optionnelle.
-
-Les fichiers uploades et journaux runtime web restent aussi dans le dossier web:
-
-```text
-Web_app_migration/storage/
-Web_app_migration/logs/
-```
-
-Pendant la migration, le backend reutilise une copie locale de la logique metier
-desktop dans:
-
-```text
-Web_app_migration/backend/legacy_src/
-```
-
-Au runtime, Django importe cette copie locale, pas les dossiers `app`, `core` ou
-`config` situes a la racine du projet desktop.
-
-## Demarrage backend
+Copier le fichier d'exemple puis adapter les valeurs locales:
 
 ```powershell
 cd Web_app_migration
-.\venv\Scripts\python.exe backend\manage.py runserver 127.0.0.1:8000
+Copy-Item .env.example .env
+Copy-Item frontend\.env.example frontend\.env
 ```
 
-Ou avec le script local:
+Variables principales:
+
+```text
+DB_HOST=localhost
+DB_USER=root
+DB_PASSWORD=
+DB_NAME=uor_university
+DB_PORT=3306
+
+WEB_FRONTEND_URL=http://127.0.0.1:5173
+WEB_BACKEND_PUBLIC_URL=http://127.0.0.1:8000
+VITE_API_BASE_URL=http://127.0.0.1:8000
+```
+
+Les fichiers `.env`, `frontend/.env`, `logs/`, `storage/`, `frontend/dist/`, `frontend/node_modules/` et `venv/` ne doivent pas etre pousses sur GitHub.
+
+## Installation Backend
+
+```powershell
+cd Web_app_migration
+py -3.11 -m venv venv
+.\venv\Scripts\python.exe -m pip install --upgrade pip
+.\venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+```
+
+Verifier la configuration Django:
+
+```powershell
+.\venv\Scripts\python.exe backend\manage.py check
+```
+
+## Installation Frontend
+
+```powershell
+cd Web_app_migration\frontend
+npm install
+npm run build
+```
+
+## Lancement
+
+Backend:
 
 ```powershell
 cd Web_app_migration
 .\start_backend.ps1
 ```
 
-Au demarrage du backend web, Django lance aussi les services runtime suivants:
+Frontend:
 
-- serveur ESP32/camera (`access_server.py`) sur `ESP32_PORT` pour eviter que
-  les requetes du materiel echouent pendant que le logiciel est ouvert;
-- tunnel public de validation Super Admin pour les liens e-mail
-  approuver/rejeter des demandes d'acces.
+```powershell
+cd Web_app_migration
+.\start_frontend.ps1
+```
 
-Ces services restent configurables dans `Web_app_migration/.env`:
+URLs locales:
+
+```text
+Frontend  http://127.0.0.1:5173
+Backend   http://127.0.0.1:8000
+Health    http://127.0.0.1:8000/api/health/
+```
+
+## Services Automatiques
+
+Au demarrage du backend, l'application peut aussi lancer:
+
+- le serveur ESP32/camera sur le port configure par `ESP32_PORT`;
+- le tunnel de validation super admin pour approuver ou rejeter les demandes d'acces.
+
+Ces options sont configurees dans `.env`:
 
 ```text
 ACCESS_SERVER_AUTOSTART=True
@@ -90,40 +145,39 @@ ACCESS_APPROVAL_BASE_URL=
 ACCESS_APPROVAL_TUNNEL_SUBDOMAIN=
 ```
 
-Si `ACCESS_APPROVAL_BASE_URL` est vide, le backend tente de demarrer
-`localtunnel` avec `npx --yes localtunnel` et injecte l'URL publique obtenue
-pour les e-mails Super Admin. Pour une URL stable, renseigner soit
-`ACCESS_APPROVAL_BASE_URL=https://votre-sous-domaine.loca.lt`, soit
-`ACCESS_APPROVAL_TUNNEL_SUBDOMAIN=votre-sous-domaine`.
+Si `ACCESS_APPROVAL_BASE_URL` est vide, le backend peut utiliser `localtunnel` pour generer une URL publique temporaire.
 
-Premiere installation backend:
+## Commandes Utiles
+
+Build frontend:
+
+```powershell
+cd Web_app_migration\frontend
+npm run build
+```
+
+Check backend:
 
 ```powershell
 cd Web_app_migration
-py -3.11 -m venv venv
-.\venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+.\venv\Scripts\python.exe backend\manage.py check
 ```
 
-Endpoints principaux:
-
-- `GET /api/health/`
-- `POST /api/auth/login/`
-- `GET /api/dashboard/summary/`
-- `GET /api/students/`
-- `GET /api/finance/overview/`
-- `GET /api/reports/summary/`
-- `GET /api/reports/students/?format=csv`
-- `GET /api/academics/students/<id>/summary/`
-- `POST /api/academics/students/<id>/records/`
-- `POST /api/academics/students/<id>/documents/`
-- `POST /verify_code/` compatible ESP32
-- `POST /api/v1/transfer/receive/` compatible API transfert
-
-## Demarrage frontend
+Compilation Python rapide:
 
 ```powershell
 cd Web_app_migration
-.\start_frontend.ps1
+.\venv\Scripts\python.exe -m compileall -q backend
 ```
 
-URL locale: `http://127.0.0.1:5173`
+## Notes De Developpement
+
+- Garder la version web autonome dans `Web_app_migration`.
+- Ne pas importer directement les dossiers de la version desktop au runtime.
+- Utiliser `backend/legacy_src/` pour les services metier repris par le web.
+- Eviter les messages techniques dans l'interface utilisateur; les erreurs visibles doivent etre claires et comprehensibles.
+- Toute inscription d'etudiant doit utiliser l'annee academique active.
+
+## Licence
+
+Projet academique U.O.R. Utilisation et distribution selon les regles du proprietaire du depot.

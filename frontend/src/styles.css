@@ -253,11 +253,12 @@ button {
 
 .metric-card {
   display: flex;
-  min-height: 188px;
+  min-height: 116px;
   align-items: flex-start;
   justify-content: space-between;
   gap: 18px;
-  padding: 22px 24px 28px 26px;
+  padding: 18px 20px;
+  text-decoration: none;
 }
 
 .metric-card strong {
@@ -277,7 +278,7 @@ button {
 
 .metric-card small {
   display: block;
-  margin-top: 34px;
+  margin-top: 14px;
   color: #00d99c;
   font-size: 0.96rem;
 }
@@ -310,13 +311,13 @@ button {
 
 .dashboard-panels {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: repeat(3, minmax(240px, 1fr));
   gap: 15px;
   margin-top: 11px;
 }
 
 .dashboard-panel {
-  min-height: 450px;
+  min-height: 330px;
   border-color: transparent;
   background: #0f1726;
   padding: 28px 30px 17px;
@@ -420,6 +421,8 @@ button {
   width: 41px;
   min-height: 2px;
   position: relative;
+  animation: growBar 700ms ease both;
+  transform-origin: bottom;
 }
 
 .bar b {
@@ -500,6 +503,7 @@ button {
   border: 1px solid #ffffff;
   border-radius: 999px;
   background: conic-gradient(#18bd88 0 var(--eligible), #f24145 var(--eligible) 100%);
+  animation: revealDonut 850ms ease both;
 }
 
 .donut-center {
@@ -539,6 +543,92 @@ button {
   border-color: transparent;
   background: #0f1726;
   padding: 22px 26px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.clickable-card {
+  cursor: pointer;
+  transition: border-color 160ms ease, transform 160ms ease, background-color 160ms ease;
+}
+
+.clickable-card:hover {
+  border-color: #3d85f6;
+  transform: translateY(-1px);
+}
+
+.payment-mix {
+  display: grid;
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.payment-mix-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 12px;
+  color: #dce8f8;
+}
+
+.payment-mix-row span {
+  color: #b8c6dc;
+}
+
+.payment-mix-row strong {
+  color: #ffffff;
+}
+
+.payment-mix-row i {
+  grid-column: 1 / -1;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #25334a;
+}
+
+.payment-mix-row i::before {
+  display: block;
+  width: var(--bar-width);
+  height: 100%;
+  border-radius: inherit;
+  background: #18bd88;
+  content: "";
+  animation: growWidth 800ms ease both;
+}
+
+.payment-mix-row i.gold::before {
+  background: #f59e0b;
+}
+
+.payment-mix-row i.red::before {
+  background: #f24145;
+}
+
+@keyframes growBar {
+  from {
+    transform: scaleY(0.08);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes revealDonut {
+  from {
+    clip-path: circle(8% at 50% 50%);
+  }
+  to {
+    clip-path: circle(72% at 50% 50%);
+  }
+}
+
+@keyframes growWidth {
+  from {
+    width: 0;
+  }
+  to {
+    width: var(--bar-width);
+  }
 }
 
 .dashboard-strip span {
@@ -1709,13 +1799,13 @@ button.metric.active {
 }
 
 .finance-page .desktop-kpis .metric {
-  min-height: clamp(104px, 10.5vh, 154px);
+  min-height: 76px;
   align-content: center;
   justify-items: center;
-  gap: 20px;
-  border: 3px solid transparent;
+  gap: 8px;
+  border: 2px solid transparent;
   border-radius: 10px;
-  padding: 18px 14px;
+  padding: 12px 14px;
   color: #ffffff;
   text-align: center;
 }
@@ -1752,15 +1842,68 @@ button.metric.active {
 }
 
 .finance-page .desktop-table-card {
-  min-height: calc(100vh - 350px);
+  min-height: calc(100vh - 320px);
   border: 0;
   border-radius: 14px;
   background: #101827;
   padding: 30px 38px 38px;
 }
 
+.finance-hierarchy-bar {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 12px;
+  border: 0;
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.finance-hierarchy-bar label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  color: #dce8f8;
+  font-weight: 800;
+}
+
+.finance-hierarchy-bar select {
+  grid-column: 1 / -1;
+  min-height: 38px;
+  border: 1px solid #344761;
+  border-radius: 8px;
+  background: #0a1221;
+  color: #ffffff;
+  padding: 0 10px;
+}
+
+.finance-group {
+  display: grid;
+  gap: 8px;
+}
+
+.finance-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #26364f;
+  border-radius: 10px;
+  background: #0a1221;
+  padding: 10px 14px;
+}
+
+.finance-group-header strong {
+  color: #ffffff;
+}
+
+.finance-group-header span {
+  color: #9fb0c8;
+  font-size: 0.88rem;
+}
+
 .finance-page .section-title-row h2 {
-  margin: 0 0 26px;
+  margin: 0;
   color: #ffffff;
   font-size: clamp(1.45rem, 2vw, 1.9rem);
 }
@@ -1781,14 +1924,14 @@ button.metric.active {
 }
 
 .finance-page .desktop-table-body {
-  max-height: clamp(330px, calc(100vh - 520px), 520px);
-  gap: 12px;
+  max-height: clamp(360px, calc(100vh - 480px), 620px);
+  gap: 14px;
   overflow-x: hidden;
   padding: 26px 10px 2px;
 }
 
 .finance-page .desktop-table-row {
-  min-height: 82px;
+  min-height: 64px;
   border: 2px solid #142139;
   border-radius: 12px;
   background: #101827;
@@ -1847,10 +1990,11 @@ button.metric.active {
 }
 
 .dialog-header {
+  position: relative;
   display: grid;
   justify-items: center;
   gap: 16px;
-  padding: 26px 24px 30px;
+  padding: 26px 78px 30px;
   color: #ffffff;
   text-align: center;
 }
@@ -1862,8 +2006,11 @@ button.metric.active {
 
 .dialog-header h2 {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: center;
   gap: 12px;
+  max-width: 100%;
   font-size: 1.75rem;
 }
 
@@ -1877,6 +2024,41 @@ button.metric.active {
 
 .dialog-header.gold {
   background: #f59e0b;
+}
+
+.dialog-close-button {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 2;
+  display: inline-grid;
+  width: 46px;
+  height: 46px;
+  place-items: center;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  border-radius: 999px;
+  background: rgba(7, 17, 31, 0.34);
+  color: #ffffff;
+  cursor: pointer;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.28);
+  transition:
+    transform 0.18s ease,
+    background 0.18s ease,
+    border-color 0.18s ease;
+}
+
+.dialog-close-button:hover,
+.dialog-close-button:focus-visible {
+  border-color: #ffffff;
+  background: #ef4444;
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.dialog-close-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
 }
 
 .dialog-body {
@@ -2019,8 +2201,53 @@ button.metric.active {
   cursor: pointer;
 }
 
+.inline-create-check {
+  display: inline-flex;
+  width: max-content;
+  max-width: 100%;
+  align-items: center;
+  gap: 8px;
+  color: #b7c6dc;
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.inline-create-check input {
+  width: 16px;
+  height: 16px;
+  accent-color: #3d85f6;
+}
+
+.form-two-columns.compact {
+  gap: 8px;
+}
+
 .photo-hint {
   color: #b7c6dc;
+}
+
+.photo-validation {
+  display: block;
+  margin-top: 8px;
+  border-radius: 8px;
+  padding: 9px 11px;
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.photo-validation.checking {
+  background: rgba(61, 133, 246, 0.16);
+  color: #bfdbfe;
+}
+
+.photo-validation.valid {
+  background: rgba(16, 185, 129, 0.16);
+  color: #6ee7b7;
+}
+
+.photo-validation.invalid {
+  background: rgba(248, 113, 113, 0.16);
+  color: #fecaca;
 }
 
 .access-code-line {
@@ -2062,6 +2289,82 @@ button.metric.active {
   background: #101827;
   min-height: calc(100vh - 206px);
   padding: 36px 38px 44px;
+}
+
+.academic-management-card {
+  min-height: 0;
+  margin-bottom: 18px;
+  padding-bottom: 22px;
+}
+
+.academic-toolbar-compact {
+  margin-bottom: 18px;
+}
+
+.academic-toolbar-main p {
+  margin: 0;
+}
+
+.academic-year-create-form {
+  display: grid;
+  grid-template-columns: minmax(170px, 1.15fr) repeat(2, minmax(130px, 0.85fr)) minmax(110px, 0.55fr) minmax(124px, 0.6fr);
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.academic-year-create-form input,
+.academic-year-table-wrap input {
+  min-height: 40px;
+  border: 2px solid #4b5563;
+  border-radius: 8px;
+  background: #333637;
+  color: #ffffff;
+  padding: 0 10px;
+  font-weight: 800;
+}
+
+.academic-year-create-form input:disabled,
+.academic-year-table-wrap input:disabled,
+.academic-columns input:disabled {
+  opacity: 0.72;
+  cursor: not-allowed;
+}
+
+.academic-active-check {
+  justify-content: center;
+  min-height: 40px;
+  border: 1px solid #26364f;
+  border-radius: 8px;
+  padding: 0 10px;
+}
+
+.academic-year-table-wrap {
+  gap: 0;
+  overflow-x: hidden;
+}
+
+.academic-year-table-wrap .desktop-table-body {
+  max-height: 260px;
+}
+
+.academic-years-page .academic-year-columns {
+  grid-template-columns: minmax(150px, 1.15fr) minmax(130px, 0.85fr) minmax(130px, 0.85fr) minmax(100px, 0.6fr) minmax(170px, 0.95fr);
+  min-width: 0;
+}
+
+.academic-year-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.academic-year-row-actions .activate {
+  background: #0e755f;
+}
+
+.academic-year-row-message {
+  grid-column: 1 / -1;
 }
 
 .academic-toolbar {
@@ -2474,6 +2777,14 @@ button.metric.active {
 
 .students-page .students-stats svg {
   color: #b6c5da;
+}
+
+.students-page .student-success-message {
+  margin: 0 0 14px;
+  border-radius: 8px;
+  background: rgba(16, 185, 129, 0.14);
+  padding: 12px 14px;
+  font-weight: 900;
 }
 
 .students-page .add-student-button {
@@ -3032,9 +3343,15 @@ button.metric.active {
   align-content: center;
   justify-items: center;
   gap: 8px;
+  border: 0;
   border-radius: 9px;
   color: #ffffff;
+  cursor: pointer;
   text-align: center;
+}
+
+.report-metric:hover {
+  transform: translateY(-1px);
 }
 
 .academic-summary-tile strong,
@@ -3241,6 +3558,10 @@ button.metric.active {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.secondary-export {
+  background: #1f2d40;
 }
 
 .transfer-request-card header {
@@ -3490,6 +3811,54 @@ button.metric.active {
   .form-two-columns {
     grid-template-columns: 1fr;
   }
+
+  .academic-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .academic-toolbar-main {
+    width: 100%;
+  }
+
+  .academic-toolbar label {
+    align-items: stretch;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .academic-toolbar label span {
+    flex: 1 1 calc(100% - 34px);
+  }
+
+  .academic-toolbar select,
+  .academic-actions button {
+    width: 100%;
+  }
+
+  .academic-actions {
+    justify-content: stretch;
+  }
+
+  .academic-table-wrap {
+    overflow-x: auto;
+  }
+
+  .academic-year-create-form {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .academic-year-table-wrap {
+    overflow-x: auto;
+  }
+
+  .academic-years-page .academic-columns {
+    min-width: max-content;
+  }
+
+  .academic-years-page .academic-year-columns {
+    min-width: max-content;
+  }
 }
 
 /* Standard density: keep the desktop look without making the browser feel zoomed in. */
@@ -3600,8 +3969,8 @@ button.metric.active {
 }
 
 .metric-card {
-  min-height: 126px;
-  padding: 18px;
+  min-height: 104px;
+  padding: 14px 16px;
 }
 
 .metric-card strong {
@@ -3625,8 +3994,8 @@ button.metric.active {
 }
 
 .dashboard-panel {
-  min-height: 330px;
-  padding: 20px;
+  min-height: 280px;
+  padding: 18px;
 }
 
 .panel-header h2,
@@ -3665,7 +4034,7 @@ button.metric.active {
 
 .desktop-kpis .metric,
 .finance-page .desktop-kpis .metric {
-  min-height: 86px;
+  min-height: 72px;
   gap: 10px;
   padding: 14px;
 }
@@ -3908,7 +4277,16 @@ button.metric.active {
 .payment-dialog .dialog-header,
 .history-dialog .dialog-header {
   gap: 6px;
-  padding: 14px 20px 13px;
+  padding: 14px 58px 13px;
+}
+
+.student-dialog .dialog-close-button,
+.payment-dialog .dialog-close-button,
+.history-dialog .dialog-close-button {
+  top: 8px;
+  right: 8px;
+  width: 38px;
+  height: 38px;
 }
 
 .student-dialog .dialog-header h2,
@@ -4067,7 +4445,8 @@ button.metric.active {
 
 @media (max-width: 560px) {
   .student-dialog .form-grid,
-  .student-dialog .dialog-actions {
+  .student-dialog .dialog-actions,
+  .academic-year-create-form {
     grid-template-columns: 1fr;
   }
 
@@ -4085,6 +4464,10 @@ button.metric.active {
 
 .academic-years-card {
   min-height: calc(100vh - 166px);
+}
+
+.academic-management-card {
+  min-height: 0;
 }
 
 .academic-toolbar {
@@ -4452,6 +4835,7 @@ button.metric.active {
 :root[data-theme="light"] .desktop-field input,
 :root[data-theme="light"] .desktop-field select,
 :root[data-theme="light"] .desktop-field textarea,
+:root[data-theme="light"] .finance-hierarchy-bar select,
 :root[data-theme="light"] .report-toolbar select,
 :root[data-theme="light"] .transfer-request-actions select,
 :root[data-theme="light"] .transfer-request-actions input,
@@ -4469,6 +4853,8 @@ button.metric.active {
 
 :root[data-theme="light"] .desktop-table-row,
 :root[data-theme="light"] .nested-panel,
+:root[data-theme="light"] .finance-hierarchy-bar,
+:root[data-theme="light"] .finance-group-header,
 :root[data-theme="light"] .academic-form-card,
 :root[data-theme="light"] .academic-data-card,
 :root[data-theme="light"] .student-pick-list,
@@ -4498,6 +4884,17 @@ button.metric.active {
 }
 
 :root[data-theme="light"] .ops-action-copy small {
+  color: #64748b;
+}
+
+:root[data-theme="light"] .finance-hierarchy-bar label,
+:root[data-theme="light"] .finance-group-header strong,
+:root[data-theme="light"] .payment-mix-row strong {
+  color: #0f172a;
+}
+
+:root[data-theme="light"] .finance-group-header span,
+:root[data-theme="light"] .payment-mix-row span {
   color: #64748b;
 }
 
@@ -5295,12 +5692,32 @@ button {
   max-width: 100%;
 }
 
+input:focus::placeholder,
+textarea:focus::placeholder {
+  color: transparent;
+}
+
 .table-wrap,
 .desktop-table-card,
 .finance-page .desktop-table-card,
 .academic-years-card,
 .students-page .desktop-table-card {
   max-width: 100%;
+}
+
+.reports-table,
+.academic-data-card .desktop-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding-bottom: 4px;
+}
+
+.reports-table .desktop-table-header,
+.reports-table .desktop-table-row,
+.academic-data-card .desktop-table-header,
+.academic-data-card .desktop-table-row {
+  min-width: max-content;
 }
 
 .desktop-table-header,
@@ -5421,6 +5838,7 @@ button {
   .dashboard-panels,
   .dashboard-bottom-grid,
   .dashboard-lower-grid,
+  .finance-hierarchy-bar,
   .metric-grid,
   .academic-grid,
   .academic-desktop-grid,
@@ -5514,6 +5932,12 @@ button {
     grid-template-columns: 1fr;
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .report-toolbar > *,
+  .report-toolbar label,
+  .report-toolbar button {
+    width: 100%;
   }
 
   .ops-action-row {

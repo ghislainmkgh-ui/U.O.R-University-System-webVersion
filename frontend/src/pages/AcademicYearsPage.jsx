@@ -1,4 +1,15 @@
-import { CalendarRange, GraduationCap, Landmark, Repeat, Save, Trash2, X } from "lucide-react";
+import {
+  CalendarRange,
+  CheckCircle2,
+  GraduationCap,
+  Landmark,
+  Plus,
+  Repeat,
+  Save,
+  Settings,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { apiRequest } from "../api/client.js";
@@ -7,25 +18,38 @@ import { PageHeader } from "../components/PageHeader.jsx";
 import { useApiResource } from "../hooks/useApiResource.js";
 import { useAuth } from "../state/AuthContext.jsx";
 
+const defaultYearForm = {
+  year_name: "",
+  start_date: "",
+  end_date: "",
+  is_active: true,
+};
+
 export function AcademicYearsPage() {
   const auth = useAuth();
   const promotions = useApiResource("/api/finance/promotions/");
-  const years = useApiResource("/api/finance/academic-years/");
+  const years = useApiResource("/api/finance/academic-years/?financials=true");
   const [faculty, setFaculty] = useState("all");
   const [message, setMessage] = useState("");
   const [showPeriods, setShowPeriods] = useState(false);
   const [showMigration, setShowMigration] = useState(false);
   const rows = Array.isArray(promotions.data) ? promotions.data : [];
   const yearRows = Array.isArray(years.data) ? years.data : [];
-  const isSuperAdmin = String(auth.user?.role || "").toLowerCase() === "super_admin";
+  const role = String(auth.user?.role || "").toLowerCase();
+  const isSuperAdmin = role === "super_admin";
+  const canCreateYears = role === "super_admin" || role === "admin";
 
   const faculties = useMemo(() => Array.from(new Set(rows.map((row) => row.faculty_name).filter(Boolean))).sort(), [rows]);
   const filteredRows = faculty === "all" ? rows : rows.filter((row) => row.faculty_name === faculty);
 
   async function savePromotion(row, fee, threshold) {
     setMessage("");
+    if (!isSuperAdmin) {
+      setMessage("Seul le super admin peut modifier les frais et les seuils.");
+      return;
+    }
     if (Number(threshold) > Number(fee)) {
-      setMessage("Le seuil ne peut pas dépasser les frais académiques.");
+      setMessage("Le seuil ne peut pas depasser les frais academiques.");
       return;
     }
     try {
@@ -33,29 +57,37 @@ export function AcademicYearsPage() {
         method: "POST",
         body: JSON.stringify({ fee_usd: Number(fee), threshold_amount: Number(threshold) }),
       });
-      setMessage("Paramètres financiers enregistrés.");
+      setMessage("Parametres financiers enregistres.");
       promotions.reload();
     } catch (err) {
       setMessage(err.message);
     }
   }
 
+  function reloadYears() {
+    years.reload();
+  }
+
   return (
     <section className="page academic-years-page desktop-page">
-      <PageHeader title="Années Académiques" subtitle="Gestion des seuils financiers et périodes d'examens" />
+      <PageHeader title="Annees Academiques" subtitle="Configuration de l'annee active, des periodes d'examens et des copies d'etudiants" />
+
+      <AsyncState loading={years.loading} error={years.error}>
+        <AcademicYearManager years={yearRows} canCreate={canCreateYears} canEdit={isSuperAdmin} onReload={reloadYears} />
+      </AsyncState>
 
       <AsyncState loading={promotions.loading || years.loading} error={promotions.error || years.error}>
         <div className="surface academic-years-card">
           <div className="academic-toolbar">
             <div className="academic-toolbar-main">
               <h2>
-                <GraduationCap size={25} /> Frais & Seuils par Faculté → Promotion
+                <GraduationCap size={25} /> Frais & Seuils par Faculte - Promotion
               </h2>
               <label>
                 <Landmark size={18} />
-                <span>Faculté:</span>
+                <span>Faculte:</span>
                 <select value={faculty} onChange={(event) => setFaculty(event.target.value)}>
-                  <option value="all">Toutes Facultés</option>
+                  <option value="all">Toutes Facultes</option>
                   {faculties.map((name) => (
                     <option key={name} value={name}>
                       {name}
@@ -67,32 +99,32 @@ export function AcademicYearsPage() {
             <div className="academic-actions">
               {isSuperAdmin && (
                 <button className="warning-button" onClick={() => setShowMigration(true)}>
-                  <Repeat size={17} /> Bascule étudiants (année)
+                  <Repeat size={17} /> Copier vers une annee
                 </button>
               )}
               <button className="primary-button" onClick={() => setShowPeriods(true)}>
-                <CalendarRange size={17} /> Gérer les périodes d'examens
+                <CalendarRange size={17} /> Gerer les periodes d'examens
               </button>
             </div>
           </div>
 
-          {message && <p className={message.includes("enregistrés") ? "success-text" : "error-text"}>{message}</p>}
+          {message && <p className={message.includes("enregistres") ? "success-text" : "error-text"}>{message}</p>}
 
           <div className="desktop-table-wrap academic-table-wrap">
             <div className="desktop-table-header academic-columns">
-              <span>Faculté</span>
+              <span>Faculte</span>
               <span>Promotion</span>
-              <span>Département</span>
-              <span>Année</span>
+              <span>Departement</span>
+              <span>Annee</span>
               <span>Frais ($)</span>
               <span>Seuil ($)</span>
               <span>Action</span>
             </div>
             <div className="desktop-table-body academic-rows">
               {filteredRows.map((row) => (
-                <PromotionFinanceRow key={row.id} row={row} onSave={savePromotion} />
+                <PromotionFinanceRow key={row.id} row={row} canEdit={isSuperAdmin} onSave={savePromotion} />
               ))}
-              {filteredRows.length === 0 && <p className="empty-cell">Aucune promotion trouvée.</p>}
+              {filteredRows.length === 0 && <p className="empty-cell">Aucune promotion trouvee.</p>}
             </div>
           </div>
         </div>
@@ -104,7 +136,137 @@ export function AcademicYearsPage() {
   );
 }
 
-function PromotionFinanceRow({ row, onSave }) {
+function AcademicYearManager({ years, canCreate, canEdit, onReload }) {
+  const yearOptions = Array.isArray(years) ? years : [];
+  const currentActiveId = String(yearId(yearOptions.find((year) => isActiveYear(year))) || "");
+  const [form, setForm] = useState(defaultYearForm);
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function createYear(event) {
+    event.preventDefault();
+    setMessage("");
+
+    if (!form.year_name.trim()) {
+      setMessage("Le nom de l'annee academique est requis.");
+      return;
+    }
+    if (form.start_date && form.end_date && form.start_date > form.end_date) {
+      setMessage("La date de debut doit etre avant la date de fin.");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      await apiRequest("/api/finance/academic-years/", {
+        method: "POST",
+        body: JSON.stringify({
+          year_name: form.year_name.trim(),
+          start_date: form.start_date || null,
+          end_date: form.end_date || null,
+          is_active: form.is_active,
+        }),
+      });
+      setForm(defaultYearForm);
+      setMessage("Annee academique creee avec succes.");
+      onReload();
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="surface academic-years-card academic-management-card">
+      <div className="academic-toolbar academic-toolbar-compact">
+        <div className="academic-toolbar-main">
+          <h2>
+            <Settings size={24} /> Gestion des annees academiques
+          </h2>
+          <p className="muted-cell">Creez l'annee courante ici. Une seule annee reste active; les anciennes deviennent inactives.</p>
+        </div>
+      </div>
+
+      {canCreate && (
+        <form className="academic-year-create-form" onSubmit={createYear}>
+          <input value={form.year_name} placeholder="Ex: 2026-2027" onChange={(event) => setForm((current) => ({ ...current, year_name: event.target.value }))} />
+          <input type="date" value={form.start_date} title="Date de debut" onChange={(event) => setForm((current) => ({ ...current, start_date: event.target.value }))} />
+          <input type="date" value={form.end_date} title="Date de fin" onChange={(event) => setForm((current) => ({ ...current, end_date: event.target.value }))} />
+          <label className="check-line academic-active-check">
+            <input type="checkbox" checked={form.is_active} onChange={(event) => setForm((current) => ({ ...current, is_active: event.target.checked }))} />
+            Activer
+          </label>
+          <button className="primary-button" disabled={busy}>
+            <Plus size={17} /> Ajouter
+          </button>
+        </form>
+      )}
+
+      {message && <p className={message.includes("succes") || message.includes("enregistree") ? "success-text" : "error-text"}>{message}</p>}
+
+      <div className="desktop-table-wrap academic-year-table-wrap">
+        <div className="desktop-table-header academic-year-columns">
+          <span>Annee</span>
+          <span>Debut</span>
+          <span>Fin</span>
+          <span>Statut</span>
+          <span>Actions</span>
+        </div>
+        <div className="desktop-table-body academic-year-rows">
+          {yearOptions.map((year) => (
+            <AcademicYearRow key={yearId(year)} year={year} currentActiveId={currentActiveId} canEdit={canEdit} onReload={onReload} />
+          ))}
+          {yearOptions.length === 0 && <p className="empty-cell">Aucune annee academique configuree.</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AcademicYearRow({ year, currentActiveId, canEdit, onReload }) {
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const active = String(yearId(year)) === String(currentActiveId);
+
+  async function activateYear() {
+    setMessage("");
+    setBusy(true);
+    try {
+      await apiRequest(`/api/finance/academic-years/${yearId(year)}/`, {
+        method: "PATCH",
+        body: JSON.stringify({ is_active: true }),
+      });
+      setMessage("Annee active mise a jour.");
+      onReload();
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="desktop-table-row academic-year-columns">
+      <span>{yearName(year)}</span>
+      <span>{dateField(year?.start_date) || "-"}</span>
+      <span>{dateField(year?.end_date) || "-"}</span>
+      <span className={`status-pill ${active ? "ok" : "warn"}`}>{active ? "Active" : "Inactive"}</span>
+      <span className="academic-year-row-actions">
+        {!active ? (
+          <button className="small-save-button activate" type="button" disabled={!canEdit || busy} onClick={activateYear}>
+            <CheckCircle2 size={16} /> Activer
+          </button>
+        ) : (
+          <span className="muted-cell">Annee courante</span>
+        )}
+      </span>
+      {message && <small className={message.includes("active") ? "success-text academic-year-row-message" : "error-text academic-year-row-message"}>{message}</small>}
+    </div>
+  );
+}
+
+function PromotionFinanceRow({ row, canEdit, onSave }) {
   const [fee, setFee] = useState(row.fee_usd || 0);
   const [threshold, setThreshold] = useState(row.threshold_amount || 0);
 
@@ -114,9 +276,9 @@ function PromotionFinanceRow({ row, onSave }) {
       <span>{row.name || "-"}</span>
       <span className="muted-cell">{row.department_name || "-"}</span>
       <span>{row.year || "-"}</span>
-      <input value={fee} onChange={(event) => setFee(event.target.value)} />
-      <input value={threshold} onChange={(event) => setThreshold(event.target.value)} />
-      <button className="small-save-button" onClick={() => onSave(row, fee, threshold)}>
+      <input value={fee} disabled={!canEdit} onChange={(event) => setFee(event.target.value)} />
+      <input value={threshold} disabled={!canEdit} onChange={(event) => setThreshold(event.target.value)} />
+      <button className="small-save-button" disabled={!canEdit} onClick={() => onSave(row, fee, threshold)}>
         <Save size={16} /> Enregistrer
       </button>
     </div>
@@ -125,7 +287,7 @@ function PromotionFinanceRow({ row, onSave }) {
 
 function ExamPeriodsDialog({ years, onClose }) {
   const yearOptions = Array.isArray(years) ? years : [];
-  const [selectedYear, setSelectedYear] = useState(() => String(yearId(yearOptions.find((year) => year.is_active)) || yearId(yearOptions[0]) || ""));
+  const [selectedYear, setSelectedYear] = useState(() => String(yearId(yearOptions.find((year) => isActiveYear(year))) || yearId(yearOptions[0]) || ""));
   const [form, setForm] = useState({ period_name: "", start_date: "", end_date: "" });
   const [message, setMessage] = useState("");
   const periods = useApiResource(`/api/finance/exam-periods/?academic_year_id=${selectedYear || 0}`);
@@ -140,7 +302,7 @@ function ExamPeriodsDialog({ years, onClose }) {
         body: JSON.stringify({ ...form, academic_year_id: Number(selectedYear) }),
       });
       setForm({ period_name: "", start_date: "", end_date: "" });
-      setMessage("Période créée.");
+      setMessage("Periode creee.");
       periods.reload();
     } catch (err) {
       setMessage(err.message);
@@ -151,7 +313,7 @@ function ExamPeriodsDialog({ years, onClose }) {
     setMessage("");
     try {
       await apiRequest(`/api/finance/exam-periods/${periodId}/`, { method: "DELETE" });
-      setMessage("Période supprimée.");
+      setMessage("Periode supprimee.");
       periods.reload();
     } catch (err) {
       setMessage(err.message);
@@ -163,13 +325,16 @@ function ExamPeriodsDialog({ years, onClose }) {
       <section className="desktop-dialog exam-period-dialog">
         <header className="dialog-header blue">
           <h2>
-            <CalendarRange size={24} /> Gestion des Périodes d'Examens
+            <CalendarRange size={24} /> Gestion des Periodes d'Examens
           </h2>
-          <p>Créez et organisez les sessions d'examen</p>
+          <p>Creez et organisez les sessions d'examen</p>
+          <button type="button" className="dialog-close-button" aria-label="Fermer" title="Fermer" onClick={onClose}>
+            <X size={24} />
+          </button>
         </header>
         <div className="dialog-body">
           <label className="dialog-field">
-            <span>Année académique</span>
+            <span>Annee academique</span>
             <select value={selectedYear} onChange={(event) => setSelectedYear(event.target.value)}>
               {yearOptions.map((year) => (
                 <option key={yearId(year)} value={yearId(year)}>
@@ -179,12 +344,12 @@ function ExamPeriodsDialog({ years, onClose }) {
             </select>
           </label>
           <form className="exam-period-form" onSubmit={addPeriod}>
-            <input value={form.period_name} placeholder="Nom de la période" onChange={(event) => setForm((current) => ({ ...current, period_name: event.target.value }))} />
+            <input value={form.period_name} placeholder="Nom de la periode" onChange={(event) => setForm((current) => ({ ...current, period_name: event.target.value }))} />
             <input type="date" value={form.start_date} onChange={(event) => setForm((current) => ({ ...current, start_date: event.target.value }))} />
             <input type="date" value={form.end_date} onChange={(event) => setForm((current) => ({ ...current, end_date: event.target.value }))} />
             <button className="dialog-primary">Valider</button>
           </form>
-          {message && <p className={message.includes("créée") || message.includes("supprimée") ? "success-text" : "error-text"}>{message}</p>}
+          {message && <p className={message.includes("creee") || message.includes("supprimee") ? "success-text" : "error-text"}>{message}</p>}
           <AsyncState loading={periods.loading} error={periods.error}>
             <div className="period-list">
               {rows.map((period) => (
@@ -192,7 +357,7 @@ function ExamPeriodsDialog({ years, onClose }) {
                   <span>
                     <strong>{period.period_name || period.name}</strong>
                     <small>
-                      {period.start_date} → {period.end_date}
+                      {period.start_date} - {period.end_date}
                     </small>
                   </span>
                   <button className="small-icon-button danger" title="Supprimer" onClick={() => deletePeriod(period.exam_period_id || period.id)}>
@@ -200,7 +365,7 @@ function ExamPeriodsDialog({ years, onClose }) {
                   </button>
                 </div>
               ))}
-              {rows.length === 0 && <p className="empty-cell">Aucune période enregistrée.</p>}
+              {rows.length === 0 && <p className="empty-cell">Aucune periode enregistree.</p>}
             </div>
           </AsyncState>
           <button className="dialog-secondary" onClick={onClose}>
@@ -214,8 +379,10 @@ function ExamPeriodsDialog({ years, onClose }) {
 
 function AcademicMigrationDialog({ years, onClose }) {
   const yearOptions = Array.isArray(years) ? years : [];
-  const [fromYear, setFromYear] = useState(() => String(yearId(yearOptions[0]) || ""));
-  const [toYear, setToYear] = useState(() => String(yearId(yearOptions[1]) || yearId(yearOptions[0]) || ""));
+  const activeYear = yearOptions.find((year) => isActiveYear(year)) || null;
+  const sourceOptions = yearOptions.filter((year) => String(yearId(year)) !== String(yearId(activeYear)));
+  const [fromYear, setFromYear] = useState(() => String(yearId(sourceOptions[0]) || yearId(yearOptions[0]) || ""));
+  const [toYear, setToYear] = useState(() => String(yearId(activeYear) || yearId(yearOptions[0]) || ""));
   const [eligibleOnly, setEligibleOnly] = useState(false);
   const [dryRun, setDryRun] = useState(true);
   const [result, setResult] = useState("");
@@ -235,7 +402,7 @@ function AcademicMigrationDialog({ years, onClose }) {
           dry_run: dryRun,
         }),
       });
-      setResult(payload.data?.message || payload.message || "Bascule traitée.");
+      setResult(payload.data?.message || payload.message || "Copie traitee.");
     } catch (err) {
       setResult(err.message);
     } finally {
@@ -248,15 +415,18 @@ function AcademicMigrationDialog({ years, onClose }) {
       <form className="desktop-dialog migration-dialog" onSubmit={submit}>
         <header className="dialog-header gold">
           <h2>
-            <Repeat size={24} /> Bascule étudiants (année)
+            <Repeat size={24} /> Copie des etudiants vers une autre annee
           </h2>
-          <p>Vérifiez en simulation avant de lancer la bascule réelle</p>
+          <p>Les dossiers de l'annee source restent en place; une nouvelle inscription est creee dans l'annee cible</p>
+          <button type="button" className="dialog-close-button" aria-label="Fermer" title="Fermer" onClick={onClose} disabled={busy}>
+            <X size={24} />
+          </button>
         </header>
         <div className="dialog-body">
           <label className="dialog-field">
-            <span>Année source</span>
+            <span>Annee source</span>
             <select value={fromYear} onChange={(event) => setFromYear(event.target.value)}>
-              {yearOptions.map((year) => (
+              {(sourceOptions.length ? sourceOptions : yearOptions).map((year) => (
                 <option key={yearId(year)} value={yearId(year)}>
                   {yearName(year)}
                 </option>
@@ -264,7 +434,7 @@ function AcademicMigrationDialog({ years, onClose }) {
             </select>
           </label>
           <label className="dialog-field">
-            <span>Année destination</span>
+            <span>Annee destination</span>
             <select value={toYear} onChange={(event) => setToYear(event.target.value)}>
               {yearOptions.map((year) => (
                 <option key={yearId(year)} value={yearId(year)}>
@@ -275,7 +445,7 @@ function AcademicMigrationDialog({ years, onClose }) {
           </label>
           <label className="check-line">
             <input type="checkbox" checked={eligibleOnly} onChange={(event) => setEligibleOnly(event.target.checked)} />
-            Étudiants éligibles seulement
+            Etudiants eligibles seulement
           </label>
           <label className="check-line">
             <input type="checkbox" checked={dryRun} onChange={(event) => setDryRun(event.target.checked)} />
@@ -287,7 +457,7 @@ function AcademicMigrationDialog({ years, onClose }) {
               <X size={16} /> Annuler
             </button>
             <button className="dialog-primary" disabled={busy}>
-              Lancer
+              Copier
             </button>
           </div>
         </div>
@@ -296,10 +466,19 @@ function AcademicMigrationDialog({ years, onClose }) {
   );
 }
 
+function dateField(value) {
+  if (!value) return "";
+  return String(value).slice(0, 10);
+}
+
+function isActiveYear(year) {
+  return year?.is_active === true || year?.is_active === 1 || String(year?.is_active).toLowerCase() === "true";
+}
+
 function yearId(year) {
   return year?.academic_year_id || year?.id || "";
 }
 
 function yearName(year) {
-  return year?.year_name || year?.name || `Année ${yearId(year)}`;
+  return year?.year_name || year?.name || `Annee ${yearId(year)}`;
 }

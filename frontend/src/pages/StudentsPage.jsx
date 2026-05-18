@@ -14,7 +14,7 @@ import {
   UsersRound,
   X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { apiRequest } from "../api/client.js";
 import { AsyncState } from "../components/AsyncState.jsx";
@@ -24,7 +24,9 @@ import { PaymentDialog, PaymentHistoryDialog } from "./FinancePage.jsx";
 
 export function StudentsPage() {
   const { data, loading, error, reload } = useApiResource("/api/students/");
-  const [yearId, setYearId] = useState("all");
+  const promotionsResource = useApiResource("/api/students/promotions/");
+  const yearsResource = useApiResource("/api/finance/academic-years/");
+  const [yearId, setYearId] = useState("active");
   const [level, setLevel] = useState("faculty");
   const [selectedFaculty, setSelectedFaculty] = useState(null);
   const [selectedDepartment, setSelectedDepartment] = useState(null);
@@ -33,14 +35,22 @@ export function StudentsPage() {
   const [editingStudent, setEditingStudent] = useState(null);
   const [paymentStudent, setPaymentStudent] = useState(null);
   const [historyStudent, setHistoryStudent] = useState(null);
+  const [notice, setNotice] = useState("");
 
   const rows = Array.isArray(data) ? data : [];
-  const years = useMemo(() => academicYears(rows), [rows]);
+  const years = useMemo(() => academicYears(rows, yearsResource.data), [rows, yearsResource.data]);
+  const activeYear = useMemo(() => years.find((year) => year.is_active) || null, [years]);
+  const activeYearId = activeYear ? String(activeYear.id) : "";
   const filteredRows = useMemo(() => {
     if (yearId === "all") return rows;
-    return rows.filter((row) => String(row.academic_year_id || "") === yearId);
-  }, [rows, yearId]);
-  const lookups = useMemo(() => buildLookups(rows), [rows]);
+    const currentYearId = yearId === "active" ? activeYearId : yearId;
+    if (!currentYearId) return [];
+    return rows.filter((row) => String(row.academic_year_id || "") === currentYearId);
+  }, [rows, yearId, activeYearId]);
+  const lookups = useMemo(
+    () => buildStudentLookups(rows, promotionsResource.data, yearsResource.data),
+    [rows, promotionsResource.data, yearsResource.data],
+  );
 
   const stats = useMemo(() => {
     const eligible = filteredRows.filter((row) => row.is_eligible).length;
@@ -57,12 +67,13 @@ export function StudentsPage() {
 
   return (
     <section className="page students-page desktop-page">
-      <AsyncState loading={loading} error={error}>
+      <AsyncState loading={loading || promotionsResource.loading || yearsResource.loading} error={error || promotionsResource.error || yearsResource.error}>
         <div className="toolbar-line students-toolbar desktop-toolbar">
           <label>
             <CalendarDays size={18} />
             <span>Année académique:</span>
             <select value={yearId} onChange={(event) => resetToFaculty(event.target.value)}>
+              <option value="active">Annee active{activeYear ? ` - ${activeYear.name}` : ""}</option>
               <option value="all">Toutes Années</option>
               {years.map((year) => (
                 <option key={year.id} value={year.id}>
@@ -74,10 +85,18 @@ export function StudentsPage() {
           <span className="students-stats">
             Total: {stats.total} | <CheckSquare size={20} /> Éligibles: {stats.eligible} | <X size={23} /> Non-éligibles: {stats.nonEligible}
           </span>
-          <button className="primary-button add-student-button" onClick={() => setModalMode("add")}>
+          <button
+            className="primary-button add-student-button"
+            onClick={() => {
+              setNotice("");
+              setModalMode("add");
+            }}
+          >
             <Plus size={28} /> Ajouter Étudiant
           </button>
         </div>
+
+        {notice && <p className="success-text student-success-message">{notice}</p>}
 
         <div className="breadcrumb-line desktop-breadcrumb">
           <button className={level === "faculty" ? "active" : ""} onClick={() => resetToFaculty()}>
@@ -153,10 +172,13 @@ export function StudentsPage() {
             setModalMode("");
             setEditingStudent(null);
           }}
-          onDone={() => {
+          onDone={(message) => {
             setModalMode("");
             setEditingStudent(null);
+            setNotice(message || (modalMode === "edit" ? "Etudiant modifie avec succes." : "Etudiant ajoute avec succes."));
             reload();
+            promotionsResource.reload();
+            yearsResource.reload();
           }}
         />
       )}
@@ -246,7 +268,7 @@ function PromotionView({ rows, department, query, setQuery, onEdit, onPay, onHis
         {promotions.map((promotion) => {
           const students = promotion.students.filter((student) => {
             if (!normalizedQuery) return true;
-            const haystack = `${student.firstname || ""} ${student.lastname || ""} ${student.email || ""} ${student.student_number || ""}`.toLowerCase();
+            const haystack = `${studentName(student)} ${student.email || ""} ${student.student_number || ""}`.toLowerCase();
             return haystack.includes(normalizedQuery);
           });
           if (students.length === 0) return null;
@@ -283,7 +305,7 @@ function PromotionTable({ promotion, rows, onEdit, onPay, onHistory }) {
           {rows.map((row, index) => (
             <div className="desktop-table-row student-columns" key={`${row.student_number}-${index}`}>
               <StudentPhoto student={row} />
-              <span>{`${row.firstname || ""} ${row.lastname || ""}`.trim() || "-"}</span>
+              <span>{studentName(row)}</span>
               <span>{row.email || "-"}</span>
               <strong className="money-cell">{formatMoney(row.amount_paid || 0)}</strong>
               <span className={row.is_eligible ? "ok-mark" : "fail-mark"}>
@@ -311,37 +333,226 @@ function PromotionTable({ promotion, rows, onEdit, onPay, onHistory }) {
 
 function StudentDialog({ mode, student, lookups, onClose, onDone }) {
   const isEdit = mode === "edit";
+  const initialIdentity = identityFromStudent(student);
+  const hierarchy = lookups.hierarchy;
+  const activeYear = lookups.years.find((year) => year.is_active) || lookups.years[0] || null;
+  const initialFacultyId = student?.faculty_id || hierarchy[0]?.id || "";
+  const initialDepartmentId =
+    student?.department_id ||
+    hierarchy.find((faculty) => String(faculty.id) === String(initialFacultyId))?.departments[0]?.id ||
+    "";
+  const initialPromotionId =
+    student?.promotion_id ||
+    hierarchy
+      .find((faculty) => String(faculty.id) === String(initialFacultyId))
+      ?.departments.find((department) => String(department.id) === String(initialDepartmentId))
+      ?.promotions[0]?.id ||
+    lookups.promotions[0]?.id ||
+    "";
   const [form, setForm] = useState(() => ({
-    student_number: student?.student_number || "STU2026-001",
-    firstname: student?.firstname || "Jean",
-    lastname: student?.lastname || "Dupont",
-    email: student?.email || "jean@uor.rw",
-    phone_number: student?.phone_number || "+243123456789",
-    academic_year_id: student?.academic_year_id || lookups.years[0]?.id || "",
-    promotion_id: student?.promotion_id || lookups.promotions[0]?.id || "",
+    student_number: student?.student_number || "",
+    nom: initialIdentity.nom,
+    postnom: initialIdentity.postnom,
+    prenom: initialIdentity.prenom,
+    email: student?.email || "",
+    phone_number: student?.phone_number || "",
+    academic_year_id: student?.academic_year_id || activeYear?.id || "",
+    faculty_id: initialFacultyId,
+    department_id: initialDepartmentId,
+    promotion_id: initialPromotionId,
+    new_faculty_name: "",
+    new_faculty_code: "",
+    new_department_name: "",
+    new_department_code: "",
+    new_promotion_name: "",
+    new_promotion_year: new Date().getFullYear(),
   }));
+  const [createAcademic, setCreateAcademic] = useState({ faculty: false, department: false, promotion: false });
   const [photoFile, setPhotoFile] = useState(null);
+  const [photoStatus, setPhotoStatus] = useState("idle");
+  const [photoMessage, setPhotoMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+
+  const selectedFaculty = hierarchy.find((faculty) => String(faculty.id) === String(form.faculty_id));
+  const departments = selectedFaculty?.departments || [];
+  const selectedDepartment = departments.find((department) => String(department.id) === String(form.department_id));
+  const promotions = selectedDepartment?.promotions || [];
+
+  useEffect(() => {
+    if (isEdit || !activeYear?.id) return;
+    setForm((current) => ({ ...current, academic_year_id: activeYear.id }));
+  }, [activeYear?.id, isEdit]);
+
+  useEffect(() => {
+    if (!hierarchy.length) return;
+    setForm((current) => {
+      const faculty = hierarchy.find((item) => String(item.id) === String(current.faculty_id)) || hierarchy[0];
+      const department = faculty.departments.find((item) => String(item.id) === String(current.department_id)) || faculty.departments[0];
+      const promotion = department?.promotions.find((item) => String(item.id) === String(current.promotion_id)) || department?.promotions[0];
+      return {
+        ...current,
+        faculty_id: faculty?.id || "",
+        department_id: department?.id || "",
+        promotion_id: promotion?.id || "",
+      };
+    });
+  }, [hierarchy]);
 
   function update(field, value) {
     setForm((current) => ({ ...current, [field]: value }));
   }
 
+  function toggleAcademicCreation(levelName, checked) {
+    setCreateAcademic((current) => {
+      if (levelName === "faculty") {
+        return checked
+          ? { faculty: true, department: true, promotion: true }
+          : { faculty: false, department: false, promotion: false };
+      }
+      if (levelName === "department") {
+        return checked
+          ? { ...current, department: true, promotion: true }
+          : { ...current, department: false, promotion: false };
+      }
+      return { ...current, promotion: checked };
+    });
+  }
+
+  function chooseFaculty(value) {
+    const faculty = hierarchy.find((item) => String(item.id) === String(value));
+    const department = faculty?.departments[0];
+    const promotion = department?.promotions[0];
+    setForm((current) => ({
+      ...current,
+      faculty_id: faculty?.id || "",
+      department_id: department?.id || "",
+      promotion_id: promotion?.id || "",
+    }));
+  }
+
+  function chooseDepartment(value) {
+    const department = departments.find((item) => String(item.id) === String(value));
+    const promotion = department?.promotions[0];
+    setForm((current) => ({
+      ...current,
+      department_id: department?.id || "",
+      promotion_id: promotion?.id || "",
+    }));
+  }
+
+  async function choosePhoto(file) {
+    setPhotoFile(file || null);
+    setPhotoStatus(file ? "checking" : "idle");
+    setPhotoMessage(file ? "Verification de la photo en cours..." : "");
+    setError("");
+    if (!file) return;
+    try {
+      const photo_base64 = await fileToDataUrl(file);
+      const payload = await apiRequest("/api/students/validate-photo/", {
+        method: "POST",
+        body: JSON.stringify({
+          photo_base64,
+          photo_extension: extensionFromFile(file.name),
+        }),
+      });
+      setPhotoStatus("valid");
+      setPhotoMessage(payload.data?.message || "Photo valide pour la reconnaissance faciale.");
+    } catch (err) {
+      setPhotoStatus("invalid");
+      setPhotoMessage(err.message);
+    }
+  }
+
+  async function ensureAcademicStructure() {
+    let facultyId = form.faculty_id;
+    let departmentId = form.department_id;
+    let promotionId = form.promotion_id;
+
+    if (createAcademic.faculty) {
+      const name = form.new_faculty_name.trim();
+      if (!name) throw new Error("Veuillez entrer le nom de la nouvelle faculte.");
+      const payload = await apiRequest("/api/students/faculties/", {
+        method: "POST",
+        body: JSON.stringify({ name, code: form.new_faculty_code.trim() || undefined }),
+      });
+      facultyId = payload.data?.id;
+    }
+
+    if (createAcademic.department) {
+      const name = form.new_department_name.trim();
+      if (!name) throw new Error("Veuillez entrer le nom du nouveau departement.");
+      if (!facultyId) throw new Error("Veuillez choisir ou creer une faculte avant le departement.");
+      const payload = await apiRequest("/api/students/departments/", {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          code: form.new_department_code.trim() || undefined,
+          faculty_id: Number(facultyId),
+        }),
+      });
+      departmentId = payload.data?.id;
+    }
+
+    if (createAcademic.promotion) {
+      const name = form.new_promotion_name.trim();
+      if (!name) throw new Error("Veuillez entrer le nom de la nouvelle promotion.");
+      if (!departmentId) throw new Error("Veuillez choisir ou creer un departement avant la promotion.");
+      const payload = await apiRequest("/api/students/promotions/", {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          year: Number(form.new_promotion_year) || new Date().getFullYear(),
+          department_id: Number(departmentId),
+        }),
+      });
+      promotionId = payload.data?.id;
+    }
+
+    if (!promotionId) {
+      throw new Error("Promotion obligatoire.");
+    }
+    return Number(promotionId);
+  }
+
   async function submit(event) {
     event.preventDefault();
     setError("");
-    if (!form.promotion_id) {
+    if (!form.nom.trim() || !form.postnom.trim() || !form.prenom.trim()) {
+      setError("Nom, postnom et prenom sont obligatoires.");
+      return;
+    }
+    if (!createAcademic.promotion && !form.promotion_id) {
       setError("Promotion obligatoire.");
+      return;
+    }
+    if (!isEdit && !activeYear?.id) {
+      setError("Configurez d'abord une annee academique active.");
       return;
     }
     if (!isEdit && !photoFile) {
       setError("Photo passeport obligatoire pour inscrire un etudiant.");
       return;
     }
+    if (photoFile && photoStatus !== "valid") {
+      setError("La photo doit etre validee avant l'enregistrement.");
+      return;
+    }
     setBusy(true);
     try {
-      const payload = { ...form, promotion_id: Number(form.promotion_id), academic_year_id: Number(form.academic_year_id) || null };
+      const promotionId = await ensureAcademicStructure();
+      const payload = {
+        student_number: form.student_number.trim(),
+        nom: form.nom.trim(),
+        postnom: form.postnom.trim(),
+        prenom: form.prenom.trim(),
+        lastname: form.nom.trim(),
+        firstname: form.prenom.trim(),
+        email: form.email.trim(),
+        phone_number: form.phone_number.trim(),
+        promotion_id: promotionId,
+        academic_year_id: Number(isEdit ? form.academic_year_id : activeYear?.id) || null,
+      };
       if (photoFile) {
         payload.photo_base64 = await fileToDataUrl(photoFile);
         payload.photo_extension = extensionFromFile(photoFile.name);
@@ -350,7 +561,7 @@ function StudentDialog({ mode, student, lookups, onClose, onDone }) {
         method: isEdit ? "PATCH" : "POST",
         body: JSON.stringify(payload),
       });
-      onDone();
+      onDone(isEdit ? "Etudiant modifie avec succes." : "Etudiant ajoute avec succes.");
     } catch (err) {
       setError(err.message);
     } finally {
@@ -366,40 +577,111 @@ function StudentDialog({ mode, student, lookups, onClose, onDone }) {
             {isEdit ? <Edit3 size={30} /> : <Plus size={34} />} {isEdit ? "Modifier Etudiant" : "Nouvel Etudiant"}
           </h2>
           <p>{isEdit ? studentName(student) : "Remplissez tous les champs requis"}</p>
+          <button type="button" className="dialog-close-button" aria-label="Fermer" title="Fermer" onClick={onClose} disabled={busy}>
+            <X size={24} />
+          </button>
         </header>
         <div className="dialog-body student-dialog-body">
           <section>
             {!isEdit && <h3>Informations personnelles</h3>}
             <div className="form-grid">
-              <DialogField label="Matricule etudiant *" value={form.student_number} onChange={(value) => update("student_number", value)} />
-              <DialogField label="Prenom *" value={form.firstname} onChange={(value) => update("firstname", value)} />
-              <DialogField label="Nom *" value={form.lastname} onChange={(value) => update("lastname", value)} />
-              <DialogField label="Email *" value={form.email} onChange={(value) => update("email", value)} />
-              <DialogField label="Telephone WhatsApp *" value={form.phone_number} onChange={(value) => update("phone_number", value)} wide />
+              <DialogField label="Matricule etudiant *" value={form.student_number} placeholder="Ex: STU2026-001" onChange={(value) => update("student_number", value)} />
+              <DialogField label="Nom *" value={form.nom} placeholder="Ex: MABIKA" onChange={(value) => update("nom", value)} />
+              <DialogField label="Postnom *" value={form.postnom} placeholder="Ex: KALALA" onChange={(value) => update("postnom", value)} />
+              <DialogField label="Prenom *" value={form.prenom} placeholder="Ex: Gloria" onChange={(value) => update("prenom", value)} />
+              <DialogField label="Email *" value={form.email} placeholder="Ex: etudiant@uor.cd" onChange={(value) => update("email", value)} />
+              <DialogField label="Telephone WhatsApp *" value={form.phone_number} placeholder="Ex: +243..." onChange={(value) => update("phone_number", value)} wide />
             </div>
           </section>
           <section>
             {!isEdit && <h3>Informations academiques</h3>}
             <label className="dialog-field">
               <span>Annee academique *</span>
-              <select value={form.academic_year_id} onChange={(event) => update("academic_year_id", event.target.value)}>
-                {lookups.years.map((year) => (
+              <select value={form.academic_year_id} disabled={!isEdit} onChange={(event) => update("academic_year_id", event.target.value)}>
+                {(isEdit ? lookups.years : activeYear ? [activeYear] : []).map((year) => (
                   <option key={year.id} value={year.id}>
-                    {year.name}
+                    {year.name}{year.is_active ? " (active)" : ""}
                   </option>
                 ))}
+                {!activeYear && !isEdit && <option value="">Aucune annee active</option>}
               </select>
             </label>
-            <label className="dialog-field">
+            <div className="dialog-field">
+              <span>Faculte *</span>
+              <label className="inline-create-check">
+                <input type="checkbox" checked={createAcademic.faculty} onChange={(event) => toggleAcademicCreation("faculty", event.target.checked)} />
+                Nouvelle faculte
+              </label>
+              {createAcademic.faculty ? (
+                <div className="form-two-columns compact">
+                  <input value={form.new_faculty_name} placeholder="Nom de la faculte" onChange={(event) => update("new_faculty_name", event.target.value)} />
+                  <input value={form.new_faculty_code} placeholder="Faculte en sigle" onChange={(event) => update("new_faculty_code", event.target.value)} />
+                </div>
+              ) : (
+                <select value={form.faculty_id} onChange={(event) => chooseFaculty(event.target.value)}>
+                  {hierarchy.map((faculty) => (
+                    <option key={faculty.id} value={faculty.id}>
+                      {faculty.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+            <div className="dialog-field">
+              <span>Departement *</span>
+              <label className="inline-create-check">
+                <input
+                  type="checkbox"
+                  checked={createAcademic.department}
+                  disabled={createAcademic.faculty}
+                  onChange={(event) => toggleAcademicCreation("department", event.target.checked)}
+                />
+                Nouveau departement
+              </label>
+              {createAcademic.department ? (
+                <div className="form-two-columns compact">
+                  <input value={form.new_department_name} placeholder="Nom du departement" onChange={(event) => update("new_department_name", event.target.value)} />
+                  <input value={form.new_department_code} placeholder="Departement en sigle" onChange={(event) => update("new_department_code", event.target.value)} />
+                </div>
+              ) : (
+                <select value={form.department_id} onChange={(event) => chooseDepartment(event.target.value)} disabled={!departments.length}>
+                  {departments.map((department) => (
+                    <option key={department.id} value={department.id}>
+                      {department.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+            <div className="dialog-field">
               <span>Promotion *</span>
-              <select value={form.promotion_id} onChange={(event) => update("promotion_id", event.target.value)}>
-                {lookups.promotions.map((promotion) => (
-                  <option key={promotion.id} value={promotion.id}>
-                    {promotion.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+              <label className="inline-create-check">
+                <input
+                  type="checkbox"
+                  checked={createAcademic.promotion}
+                  disabled={createAcademic.department}
+                  onChange={(event) => toggleAcademicCreation("promotion", event.target.checked)}
+                />
+                Nouvelle promotion
+              </label>
+              {createAcademic.promotion ? (
+                <div className="form-two-columns compact">
+                  <input value={form.new_promotion_name} placeholder="Ex: L1 LMD/G.I" onChange={(event) => update("new_promotion_name", event.target.value)} />
+                  <input value={form.new_promotion_year} placeholder="Annee" onChange={(event) => update("new_promotion_year", event.target.value)} />
+                </div>
+              ) : (
+                <select value={form.promotion_id} onChange={(event) => update("promotion_id", event.target.value)} disabled={!promotions.length}>
+                  {promotions.map((promotion) => (
+                    <option key={promotion.id} value={promotion.id}>
+                      {promotion.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+            <span className="photo-hint">
+              Toute nouvelle promotion creee ici apparaitra dans Annees Academiques pour definir les frais et le seuil.
+            </span>
           </section>
           <section>
             <h3>Photo du visage (passeport){isEdit ? "" : " *"}</h3>
@@ -407,9 +689,10 @@ function StudentDialog({ mode, student, lookups, onClose, onDone }) {
               <input value={photoFile?.name || ""} readOnly />
               <label>
                 Parcourir
-                <input type="file" accept="image/*" hidden onChange={(event) => setPhotoFile(event.target.files?.[0] || null)} />
+                <input type="file" accept="image/*" hidden onChange={(event) => choosePhoto(event.target.files?.[0] || null)} />
               </label>
             </div>
+            {photoMessage && <span className={`photo-validation ${photoStatus}`}>{photoMessage}</span>}
             <span className="photo-hint">Fond neutre, visage centre, une seule personne, bonne lumiere.</span>
           </section>
           {error && <p className="error-text">{error}</p>}
@@ -417,7 +700,7 @@ function StudentDialog({ mode, student, lookups, onClose, onDone }) {
             <button type="button" className="dialog-secondary" onClick={onClose} disabled={busy}>
               Annuler
             </button>
-            <button className="dialog-primary green" disabled={busy}>
+            <button className="dialog-primary green" disabled={busy || photoStatus === "checking"}>
               {isEdit ? "Enregistrer" : "Valider"}
             </button>
           </div>
@@ -427,11 +710,11 @@ function StudentDialog({ mode, student, lookups, onClose, onDone }) {
   );
 }
 
-function DialogField({ label, value, onChange, wide = false }) {
+function DialogField({ label, value, placeholder, onChange, wide = false }) {
   return (
     <label className={`dialog-field ${wide ? "wide" : ""}`}>
       <span>{label}</span>
-      <input value={value} onChange={(event) => onChange(event.target.value)} />
+      <input value={value} placeholder={placeholder || ""} onChange={(event) => onChange(event.target.value)} />
     </label>
   );
 }
@@ -479,14 +762,25 @@ function groupRows(rows, idKey, makeMeta) {
   return Array.from(map.values()).sort((a, b) => String(a.name).localeCompare(String(b.name)));
 }
 
-function academicYears(rows) {
+function academicYears(rows, yearRows = []) {
   const map = new Map();
   rows.forEach((row) => {
     const id = row.academic_year_id;
     if (!id) return;
     map.set(String(id), row.academic_year_name || row.year_name || `Année ${id}`);
   });
-  return Array.from(map, ([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  (Array.isArray(yearRows) ? yearRows : []).forEach((year) => {
+    const id = year.academic_year_id || year.id;
+    if (!id) return;
+    map.set(String(id), {
+      id,
+      name: year.year_name || year.name || `Annee ${id}`,
+      is_active: isActiveYear(year),
+    });
+  });
+  return Array.from(map, ([id, value]) =>
+    typeof value === "object" ? value : { id, name: value, is_active: false },
+  ).sort((a, b) => Number(b.is_active) - Number(a.is_active) || a.name.localeCompare(b.name, "fr"));
 }
 
 function buildLookups(rows) {
@@ -509,6 +803,88 @@ function buildLookups(rows) {
   };
 }
 
+function buildStudentLookups(rows, promotionRows = [], yearRows = []) {
+  const yearMap = new Map();
+  const promoMap = new Map();
+  const facultyMap = new Map();
+  const allPromotions = [
+    ...(Array.isArray(promotionRows) ? promotionRows : []),
+    ...rows.filter((row) => row.promotion_id),
+  ];
+
+  function addPromotion(row) {
+    const promotionId = row.promotion_id || row.id;
+    if (!promotionId) return;
+    const facultyId = row.faculty_id || `faculty:${row.faculty_name || "unknown"}`;
+    const departmentId = row.department_id || `department:${facultyId}:${row.department_name || "unknown"}`;
+    if (!facultyMap.has(String(facultyId))) {
+      facultyMap.set(String(facultyId), {
+        id: facultyId,
+        name: row.faculty_name || "Faculte non definie",
+        departments: new Map(),
+      });
+    }
+    const faculty = facultyMap.get(String(facultyId));
+    if (!faculty.departments.has(String(departmentId))) {
+      faculty.departments.set(String(departmentId), {
+        id: departmentId,
+        name: row.department_name || "Departement non defini",
+        promotions: new Map(),
+      });
+    }
+    const department = faculty.departments.get(String(departmentId));
+    department.promotions.set(String(promotionId), {
+      id: promotionId,
+      name: `${row.promotion_name || row.name || "Promotion"}${row.promotion_year || row.year ? ` (${row.promotion_year || row.year})` : ""}`,
+    });
+    promoMap.set(String(promotionId), {
+      id: promotionId,
+      label: `${row.faculty_name || "Faculte"} / ${row.department_name || "Departement"} / ${row.promotion_name || row.name || "Promotion"}`,
+    });
+  }
+
+  allPromotions.forEach(addPromotion);
+  rows.forEach((row) => {
+    if (row.academic_year_id) {
+      yearMap.set(String(row.academic_year_id), {
+        id: row.academic_year_id,
+        name: row.academic_year_name || row.year_name || `Annee ${row.academic_year_id}`,
+        is_active: row.academic_year_is_active === true || row.academic_year_is_active === 1,
+      });
+    }
+  });
+  (Array.isArray(yearRows) ? yearRows : []).forEach((year) => {
+    const id = year.academic_year_id || year.id;
+    if (id) {
+      yearMap.set(String(id), {
+        id,
+        name: year.year_name || year.name || `Annee ${id}`,
+        is_active: isActiveYear(year),
+      });
+    }
+  });
+
+  return {
+    years: Array.from(yearMap.values()).sort((a, b) => Number(b.is_active) - Number(a.is_active) || a.name.localeCompare(b.name, "fr")),
+    promotions: Array.from(promoMap.values()),
+    hierarchy: Array.from(facultyMap.values())
+      .map((faculty) => ({
+        ...faculty,
+        departments: Array.from(faculty.departments.values())
+          .map((department) => ({
+            ...department,
+            promotions: Array.from(department.promotions.values()).sort((a, b) => a.name.localeCompare(b.name, "fr")),
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name, "fr")),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name, "fr")),
+  };
+}
+
+function isActiveYear(year) {
+  return year?.is_active === true || year?.is_active === 1 || String(year?.is_active).toLowerCase() === "true";
+}
+
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -524,7 +900,26 @@ function extensionFromFile(name) {
 }
 
 function studentName(row) {
-  return `${row.firstname || ""} ${row.lastname || ""}`.trim() || "-";
+  const identity = identityFromStudent(row);
+  return [identity.nom, identity.postnom, identity.prenom].filter(Boolean).join(" ") || row?.student_name || "-";
+}
+
+function identityFromStudent(row) {
+  const lastname = String(row?.nom || row?.lastname || "").trim();
+  const postnom = row?.postnom;
+  if (postnom === undefined || postnom === null) {
+    const parts = lastname.split(/\s+/).filter(Boolean);
+    return {
+      nom: parts[0] || "",
+      postnom: parts.slice(1).join(" "),
+      prenom: String(row?.prenom || row?.firstname || "").trim(),
+    };
+  }
+  return {
+    nom: lastname,
+    postnom: String(postnom || "").trim(),
+    prenom: String(row?.prenom || row?.firstname || "").trim(),
+  };
 }
 
 function formatMoney(value) {

@@ -8,6 +8,7 @@ import {
   Search,
   Send,
   UserRound,
+  X,
   XSquare,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -357,7 +358,7 @@ export function TransfersPage() {
                     <select value={selectedPartnerCode} onChange={(event) => setSelectedPartnerCode(event.target.value)}>
                       {partnerRows.map((partner) => (
                         <option key={partner.university_code} value={partner.university_code}>
-                          {partner.university_name} ({partner.university_code}) - {partner.country || "-"}
+                          {partnerOptionLabel(partner)}
                         </option>
                       ))}
                     </select>
@@ -509,6 +510,9 @@ export function TransfersPage() {
                 <FileJson size={24} /> Details du Transfert
               </h2>
               <p>{packageModal.code}</p>
+              <button type="button" className="dialog-close-button" aria-label="Fermer" title="Fermer" onClick={() => setPackageModal(null)}>
+                <X size={24} />
+              </button>
             </header>
             <div className="dialog-body">
               {packageModal.loading ? <p>Chargement...</p> : <pre className="json-preview">{prettyJson(packageModal.content)}</pre>}
@@ -622,6 +626,13 @@ function deliveryLabel(value) {
     echec: "Echec",
     non_envoye: "Non envoye",
   }[String(value || "").toLowerCase()] || value || "Non envoye";
+}
+
+function partnerOptionLabel(partner) {
+  const code = String(partner?.university_code || "").trim();
+  const name = String(partner?.university_name || "").trim();
+  const label = code && name ? `${code} - ${name}` : name || code || "Universite partenaire";
+  return label.length > 32 ? `${label.slice(0, 29)}...` : label;
 }
 
 function prettyJson(content) {

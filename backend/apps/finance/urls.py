@@ -9,6 +9,7 @@ urlpatterns = [
     path("students/<int:student_id>/access-code/", views.latest_access_code, name="latest-access-code"),
     path("students/<int:student_id>/access-code/resend/", views.resend_access_code, name="resend-access-code"),
     path("academic-years/", views.academic_years, name="academic-years"),
+    path("academic-years/<int:academic_year_id>/", views.academic_year_detail, name="academic-year-detail"),
     path("academic-years/<int:academic_year_id>/thresholds/", views.update_academic_year_thresholds, name="year-thresholds"),
     path("exam-periods/", views.exam_periods, name="exam-periods"),
     path("exam-periods/<int:period_id>/", views.delete_exam_period, name="delete-exam-period"),

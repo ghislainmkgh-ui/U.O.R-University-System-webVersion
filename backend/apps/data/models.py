@@ -60,6 +60,8 @@ class Promotion(UnmanagedModel):
 class AcademicYear(UnmanagedModel):
     academic_year_id = models.AutoField(primary_key=True)
     year_name = models.CharField(max_length=50)
+    start_date = models.DateField(blank=True, null=True)
+    end_date = models.DateField(blank=True, null=True)
     threshold_amount = models.DecimalField(max_digits=15, decimal_places=2)
     final_fee = models.DecimalField(max_digits=15, decimal_places=2)
     partial_valid_days = models.IntegerField(default=30)
@@ -90,6 +92,7 @@ class Student(UnmanagedModel):
     student_number = models.CharField(max_length=50)
     firstname = models.CharField(max_length=255)
     lastname = models.CharField(max_length=255)
+    postnom = models.CharField(max_length=255, blank=True, null=True)
     email = models.CharField(max_length=255, blank=True, null=True)
     phone_number = models.CharField(max_length=20, blank=True, null=True)
     passport_photo_path = models.CharField(max_length=512, blank=True, null=True)

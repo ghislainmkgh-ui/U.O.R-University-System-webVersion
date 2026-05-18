@@ -1,4 +1,4 @@
-import { CreditCard, FileText, FolderOpen, Landmark, Layers3 } from "lucide-react";
+import { CreditCard, FileText, FolderOpen, Landmark, Layers3, X } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { apiRequest } from "../api/client.js";
@@ -49,38 +49,14 @@ export function FinancePage() {
 
   return (
     <section className="page finance-page desktop-page">
-      <PageHeader title="Gestion Financière" subtitle="Suivi des paiements et seuils" />
+      <PageHeader title="Gestion Financiere" subtitle="Suivi des paiements et seuils" />
 
       <AsyncState loading={loading} error={error}>
         <div className="metric-grid finance-filter-grid desktop-kpis">
-          <FinanceKpi
-            value={formatMoney(data?.revenue || 0)}
-            label="Revenus Totaux"
-            tone="green"
-            active={filter === "all"}
-            onClick={() => setFilter("all")}
-          />
-          <FinanceKpi
-            value={Number(paymentStatus.eligible || 0)}
-            label="Paiements Complètes"
-            tone="blue"
-            active={filter === "paid"}
-            onClick={() => setFilter("paid")}
-          />
-          <FinanceKpi
-            value={Number(paymentStatus.partial_paid || 0)}
-            label="Paiements Partiels"
-            tone="gold"
-            active={filter === "partial"}
-            onClick={() => setFilter("partial")}
-          />
-          <FinanceKpi
-            value={Number(paymentStatus.never_paid || 0)}
-            label="Non Payés"
-            tone="red"
-            active={filter === "unpaid"}
-            onClick={() => setFilter("unpaid")}
-          />
+          <FinanceKpi value={formatMoney(data?.revenue || 0)} label="Revenus Totaux" tone="green" active={filter === "all"} onClick={() => setFilter("all")} />
+          <FinanceKpi value={Number(paymentStatus.eligible || 0)} label="Paiements Complets" tone="blue" active={filter === "paid"} onClick={() => setFilter("paid")} />
+          <FinanceKpi value={Number(paymentStatus.partial_paid || 0)} label="Paiements Partiels" tone="gold" active={filter === "partial"} onClick={() => setFilter("partial")} />
+          <FinanceKpi value={Number(paymentStatus.never_paid || 0)} label="Non Payes" tone="red" active={filter === "unpaid"} onClick={() => setFilter("unpaid")} />
         </div>
 
         <div className="surface finance-hierarchy-bar">
@@ -144,26 +120,36 @@ function DesktopFinanceTable({ groups }) {
     <div className="desktop-table-wrap">
       <div className="desktop-table-header finance-columns">
         <span>Photo</span>
-        <span>Étudiant</span>
+        <span>Etudiant</span>
         <span>ID</span>
-        <span>Montant Payé ($)</span>
-        <span>Seuil Requis ($)</span>
+        <span>Montant paye ($)</span>
+        <span>Seuil requis ($)</span>
         <span>Statut</span>
         <span>Date</span>
       </div>
       <div className="desktop-table-body">
-        {rows.length === 0 ? (
-          <p className="empty-cell">Aucun paiement trouvé.</p>
+        {groups.length === 0 ? (
+          <p className="empty-cell">Aucun paiement trouve.</p>
         ) : (
-          rows.map((row, index) => (
-            <div className="desktop-table-row finance-columns" key={`${row.student_number}-${index}`}>
-              <StudentPhoto student={row} />
-              <span>{`${row.firstname || ""} ${row.lastname || ""}`.trim() || "-"}</span>
-              <span className="muted-cell">{row.student_number || "-"}</span>
-              <strong className="money-cell">{formatMoney(row.amount_paid || 0)}</strong>
-              <span>{formatMoney(row.threshold_required || 0)}</span>
-              <span className={`status-text ${paymentCategory(row)}`}>{paymentLabel(row)}</span>
-              <span className="date-cell">{formatFinanceDate(row.last_payment_date)}</span>
+          groups.map((group) => (
+            <div className="finance-group" key={group.key}>
+              <div className="finance-group-header">
+                <strong>{group.title}</strong>
+                <span>
+                  {group.rows.length} etudiant(s) | {formatMoney(group.totalPaid)} payes
+                </span>
+              </div>
+              {group.rows.map((row, index) => (
+                <div className="desktop-table-row finance-columns" key={`${row.student_number}-${index}`}>
+                  <StudentPhoto student={row} />
+                  <span>{studentName(row)}</span>
+                  <span className="muted-cell">{row.student_number || "-"}</span>
+                  <strong className="money-cell">{formatMoney(row.amount_paid || 0)}</strong>
+                  <span>{formatMoney(row.threshold_required || 0)}</span>
+                  <span className={`status-text ${paymentCategory(row)}`}>{paymentLabel(row)}</span>
+                  <span className="date-cell">{formatFinanceDate(row.last_payment_date)}</span>
+                </div>
+              ))}
             </div>
           ))
         )}
@@ -224,6 +210,9 @@ export function PaymentDialog({ student, onClose, onDone }) {
             <CreditCard size={24} /> Enregistrer un Paiement
           </h2>
           <p>{studentName(student)} - #{student.student_number}</p>
+          <button type="button" className="dialog-close-button" aria-label="Fermer" title="Fermer" onClick={onClose} disabled={busy}>
+            <X size={24} />
+          </button>
         </header>
         <div className="dialog-body">
           <label className="dialog-field">
@@ -277,6 +266,9 @@ export function PaymentHistoryDialog({ student, onClose }) {
             <FileText size={24} /> Historique des Paiements
           </h2>
           <p>{studentName(student)} - #{student.student_number}</p>
+          <button type="button" className="dialog-close-button" aria-label="Fermer" title="Fermer" onClick={onClose}>
+            <X size={24} />
+          </button>
         </header>
         <div className="dialog-body light-dialog-body">
           <div className="access-code-toolbar">
@@ -322,6 +314,55 @@ export function PaymentHistoryDialog({ student, onClose }) {
   );
 }
 
+function buildFinanceHierarchy(rows) {
+  const faculties = new Map();
+  rows.forEach((row) => {
+    const facultyId = row.faculty_id || "unknown-faculty";
+    const departmentId = row.department_id || `unknown-department-${facultyId}`;
+    const promotionId = row.promotion_id || `unknown-promotion-${departmentId}`;
+
+    if (!faculties.has(facultyId)) {
+      faculties.set(facultyId, { id: facultyId, name: row.faculty_name || "Faculte non definie", departments: new Map() });
+    }
+    const faculty = faculties.get(facultyId);
+    if (!faculty.departments.has(departmentId)) {
+      faculty.departments.set(departmentId, { id: departmentId, name: row.department_name || "Departement non defini", promotions: new Map() });
+    }
+    const department = faculty.departments.get(departmentId);
+    if (!department.promotions.has(promotionId)) {
+      department.promotions.set(promotionId, { id: promotionId, name: row.promotion_name || "Promotion non definie" });
+    }
+  });
+
+  return Array.from(faculties.values()).map((faculty) => ({
+    ...faculty,
+    departments: Array.from(faculty.departments.values()).map((department) => ({
+      ...department,
+      promotions: Array.from(department.promotions.values()),
+    })),
+  }));
+}
+
+function groupFinanceRows(rows) {
+  const groups = new Map();
+  rows.forEach((row) => {
+    const key = `${row.faculty_id || "x"}-${row.department_id || "x"}-${row.promotion_id || "x"}`;
+    const title = `${row.faculty_name || "Faculte non definie"} / ${row.department_name || "Departement non defini"} / ${row.promotion_name || "Promotion non definie"}`;
+    if (!groups.has(key)) {
+      groups.set(key, { key, title, totalPaid: 0, rows: [] });
+    }
+    const group = groups.get(key);
+    group.rows.push(row);
+    group.totalPaid += Number(row.amount_paid || 0);
+  });
+  return Array.from(groups.values());
+}
+
+function hierarchyLabel(faculty, department, promotion) {
+  if (!faculty) return "Toutes les facultes, departements et promotions";
+  return [faculty.name, department?.name, promotion?.name].filter(Boolean).join(" / ");
+}
+
 function paymentCategory(row) {
   const paid = Number(row.amount_paid || 0);
   const threshold = Number(row.threshold_required || 0);
@@ -332,22 +373,22 @@ function paymentCategory(row) {
 
 function paymentLabel(row) {
   const category = paymentCategory(row);
-  if (category === "paid") return "Payé";
+  if (category === "paid") return "Paye";
   if (category === "partial") return "Partiel";
-  return "Non payé";
+  return "Non paye";
 }
 
 function filterLabel(value) {
   return {
     all: "Tous",
-    paid: "Payés Complètement",
+    paid: "Payes completement",
     partial: "Paiements partiels",
-    unpaid: "Non Payés",
+    unpaid: "Non payes",
   }[value];
 }
 
 function studentName(row) {
-  return `${row.firstname || ""} ${row.lastname || ""}`.trim() || "-";
+  return `${row?.firstname || ""} ${row?.lastname || ""}`.trim() || "-";
 }
 
 function formatMoney(value) {

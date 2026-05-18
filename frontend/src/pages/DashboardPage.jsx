@@ -2,8 +2,10 @@ import {
   CheckSquare,
   CircleDollarSign,
   KeyRound,
+  Moon,
   RefreshCw,
   ShieldCheck,
+  Sun,
   UsersRound,
   Wifi,
 } from "lucide-react";
@@ -11,6 +13,7 @@ import { Link } from "react-router-dom";
 
 import { AsyncState } from "../components/AsyncState.jsx";
 import { useApiResource } from "../hooks/useApiResource.js";
+import { usePreferences } from "../state/PreferencesContext.jsx";
 
 const dateFormatter = new Intl.DateTimeFormat("fr-FR", {
   day: "2-digit",
@@ -21,6 +24,7 @@ const dateFormatter = new Intl.DateTimeFormat("fr-FR", {
 export function DashboardPage() {
   const summary = useApiResource("/api/dashboard/summary/");
   const accessStatus = useApiResource("/api/access/status/");
+  const { language, setLanguage, theme, toggleTheme, t } = usePreferences();
   const data = summary.data || {};
 
   const totalStudents = Number(data.total_students || 0);
@@ -48,6 +52,15 @@ export function DashboardPage() {
           <h1>Tableau de Bord</h1>
           <p>Vue d'ensemble - {dateFormatter.format(new Date())}</p>
         </div>
+        <div className="dashboard-controls">
+          <div className="language-toggle" aria-label={t("language")}>
+            <button type="button" className={language === "FR" ? "active" : ""} onClick={() => setLanguage("FR")}>FR</button>
+            <button type="button" className={language === "EN" ? "active" : ""} onClick={() => setLanguage("EN")}>EN</button>
+          </div>
+          <button type="button" className="theme-button" title={theme === "dark" ? t("lightTheme") : t("darkTheme")} onClick={toggleTheme}>
+            {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+          </button>
+        </div>
       </header>
 
       <AsyncState loading={summary.loading} error={summary.error}>
@@ -58,6 +71,7 @@ export function DashboardPage() {
             value={totalStudents.toLocaleString("fr-FR")}
             label="Etudiants Inscrits"
             footnote={`${eligibilityRate}% eligibles`}
+            to="/students"
           />
           <MetricCard
             icon={CircleDollarSign}
@@ -65,6 +79,7 @@ export function DashboardPage() {
             value={formatMoney(revenue)}
             label="Revenus Collectes"
             footnote="Frais academiques"
+            to="/finance"
           />
           <MetricCard
             icon={CheckSquare}
@@ -72,6 +87,7 @@ export function DashboardPage() {
             value={eligibleStudents.toLocaleString("fr-FR")}
             label="Etudiants Eligibles"
             footnote={`sur ${totalStudents.toLocaleString("fr-FR")} inscrits`}
+            to="/reports"
           />
           <MetricCard
             icon={KeyRound}
@@ -79,6 +95,7 @@ export function DashboardPage() {
             value={accessGranted.toLocaleString("fr-FR")}
             label="Acces Accordes"
             footnote={`${accessGrantedPercent(accessGranted, totalStudents)}% du total`}
+            to="/access"
           />
         </div>
 
@@ -115,6 +132,11 @@ export function DashboardPage() {
               nonEligible={nonEligibleStudents}
               pending={Math.max(0, totalStudents - eligibleStudents - nonEligibleStudents)}
             />
+          </section>
+
+          <section className="dashboard-panel finance-chart-panel">
+            <PanelHeader title="Paiements" eyebrow="Etat financier" to="/finance" />
+            <PaymentMixChart status={paymentStatus} totalStudents={totalStudents} />
           </section>
         </div>
 
@@ -154,9 +176,9 @@ export function DashboardPage() {
   );
 }
 
-function MetricCard({ icon: Icon, tone, value, label, footnote }) {
+function MetricCard({ icon: Icon, tone, value, label, footnote, to }) {
   return (
-    <article className="dashboard-card metric-card">
+    <Link className="dashboard-card metric-card clickable-card" to={to}>
       <div>
         <strong>{value}</strong>
         <span>{label}</span>
@@ -165,7 +187,7 @@ function MetricCard({ icon: Icon, tone, value, label, footnote }) {
       <div className={`metric-icon ${tone}`}>
         <Icon size={32} strokeWidth={2.2} />
       </div>
-    </article>
+    </Link>
   );
 }
 
@@ -230,9 +252,32 @@ function DonutChart({ percentage, eligible, nonEligible, pending }) {
   );
 }
 
+function PaymentMixChart({ status, totalStudents }) {
+  const rows = [
+    { label: "Complets", value: Number(status.eligible || 0), tone: "green" },
+    { label: "Partiels", value: Number(status.partial_paid || 0), tone: "gold" },
+    { label: "Non payes", value: Number(status.never_paid || 0), tone: "red" },
+  ];
+  const total = Math.max(totalStudents, rows.reduce((sum, row) => sum + row.value, 0), 1);
+  return (
+    <div className="payment-mix">
+      {rows.map((row) => {
+        const width = Math.round((row.value / total) * 100);
+        return (
+          <div className="payment-mix-row" key={row.label}>
+            <span>{row.label}</span>
+            <strong>{row.value.toLocaleString("fr-FR")}</strong>
+            <i className={row.tone} style={{ "--bar-width": `${width}%` }} />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function ActionStrip({ title, icon: Icon, tone, text, progress, to, action }) {
   return (
-    <article className="dashboard-strip">
+    <Link className="dashboard-strip clickable-card" to={to}>
       <div>
         <h2>{title}</h2>
         <span>{text}</span>
@@ -241,14 +286,14 @@ function ActionStrip({ title, icon: Icon, tone, text, progress, to, action }) {
             <i style={{ width: `${Math.round(Math.max(0, Math.min(1, progress)) * 100)}%` }} />
           </div>
         )}
-        <Link className="text-action" to={to}>
+        <span className="text-action">
           {action}
-        </Link>
+        </span>
       </div>
       <div className={`strip-icon ${tone}`}>
         <Icon size={30} />
       </div>
-    </article>
+    </Link>
   );
 }
 

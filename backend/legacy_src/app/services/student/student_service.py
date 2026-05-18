@@ -32,6 +32,17 @@ class StudentService:
             logger.error(f"Error fetching columns for {table_name}: {e}")
             return set()
 
+    def ensure_student_identity_columns(self) -> None:
+        """Keep student identity storage compatible with the web form."""
+        try:
+            columns = self._get_table_columns("student")
+            if columns and "postnom" not in columns:
+                self.db.execute_update(
+                    "ALTER TABLE student ADD COLUMN postnom VARCHAR(255) DEFAULT NULL AFTER lastname"
+                )
+        except Exception as e:
+            logger.warning(f"Could not ensure student.postnom column: {e}")
+
     def _ensure_academic_year_migration_audit_table(self) -> None:
         """Crée la table d'audit des bascules annuelles si nécessaire."""
         try:
@@ -230,13 +241,15 @@ class StudentService:
                 year_name_col = "year_name" if "year_name" in year_cols else "name"
                 year_select = f", ay.{year_name_col} AS academic_year_name, s.academic_year_id"
                 year_join = "LEFT JOIN academic_year ay ON ay.academic_year_id = s.academic_year_id"
+            postnom_select = ", s.postnom" if "postnom" in student_cols else ", NULL AS postnom"
 
             query = f"""
                 SELECT 
                     s.id,
                     s.student_number,
                     s.firstname,
-                    s.lastname,
+                    s.lastname
+                    {postnom_select},
                     s.email,
                     s.phone_number,
                     s.passport_photo_path,
@@ -282,11 +295,13 @@ class StudentService:
                 year_name_col = "year_name" if "year_name" in year_cols else "name"
                 year_select = f", ay.{year_name_col} AS academic_year_name, s.academic_year_id"
                 year_join = "LEFT JOIN academic_year ay ON ay.academic_year_id = s.academic_year_id"
+            postnom_select = "" if "postnom" in student_cols else ", NULL AS postnom"
 
             query = f"""
                 SELECT s.*, p.name AS promotion_name, p.year AS promotion_year,
                        d.name AS department_name, d.code AS department_code,
                        f.name AS faculty_name, f.code AS faculty_code
+                       {postnom_select}
                        {year_select}
                 FROM student s
                 JOIN promotion p ON s.promotion_id = p.id
@@ -315,6 +330,9 @@ class StudentService:
                 "passport_photo_blob",
                 "academic_year_id",
             }
+            columns = self._get_table_columns("student")
+            if "postnom" in columns:
+                allowed.add("postnom")
             fields = []
             params = []
             for key, value in data.items():
@@ -355,7 +373,9 @@ class StudentService:
                        p.year,
                        p.fee_usd,
                        p.threshold_amount,
+                       d.id as department_id,
                        d.name as department_name,
+                       f.id as faculty_id,
                        f.name as faculty_name,
                        f.code as faculty_code
                 FROM promotion p
@@ -514,8 +534,8 @@ class StudentService:
 
     def create_promotion(self, name: str, department_id: int, year: Optional[int] = None) -> Optional[int]:
         """Crée une promotion si nécessaire"""
+        year_value = int(year) if year else self._extract_year(name)
         try:
-            year_value = int(year) if year else self._extract_year(name)
             query = """
                 INSERT INTO promotion (name, year, department_id, is_active)
                 VALUES (%s, %s, %s, 1)
@@ -529,8 +549,8 @@ class StudentService:
         except Exception as e:
             logger.error(f"Error creating promotion: {e}")
             result = self.db.execute_query(
-                "SELECT id FROM promotion WHERE name = %s AND department_id = %s",
-                (name, department_id)
+                "SELECT id FROM promotion WHERE department_id = %s AND (name = %s OR year = %s)",
+                (department_id, name, year_value)
             )
             return result[0]["id"] if result else None
 
@@ -698,6 +718,12 @@ class StudentService:
             logger.error(f"Error finding promotion by input: {e}")
             return []
 
+    def _copy_student_number(self, student_number: str, suffix: str) -> str:
+        base = re.sub(r"\s+", "", str(student_number or "STUDENT"))
+        clean_suffix = re.sub(r"[^0-9A-Za-z-]+", "", str(suffix or "-COPY")) or "-COPY"
+        max_base = max(1, 50 - len(clean_suffix))
+        return f"{base[:max_base]}{clean_suffix}"
+
     def migrate_students_to_academic_year(
         self,
         from_academic_year_id: int,
@@ -750,10 +776,13 @@ class StudentService:
 
             query_candidates = f"""
                 SELECT
-                    s.id,
-                    COALESCE(fp.is_eligible, 0) AS is_eligible
+                    s.*,
+                    COALESCE(fp.is_eligible, 0) AS is_eligible,
+                    p.fee_usd AS copy_final_fee,
+                    p.threshold_amount AS copy_threshold_amount
                 FROM student s
                 LEFT JOIN finance_profile fp ON fp.student_id = s.id
+                LEFT JOIN promotion p ON p.id = s.promotion_id
                 WHERE {' AND '.join(filters)}
                 ORDER BY s.id
             """
@@ -777,6 +806,7 @@ class StudentService:
                     "success": True,
                     "message": "Prévisualisation calculée.",
                     "moved_count": len(moved_student_ids),
+                    "copied_count": len(moved_student_ids),
                     "moved_student_ids": moved_student_ids,
                     "eligible_student_ids": eligible_student_ids,
                     "dry_run": True,
@@ -786,85 +816,138 @@ class StudentService:
             finance_cols = self._get_table_columns("finance_profile")
             has_fp = bool(finance_cols)
             student_cols = self._get_table_columns("student")
-            has_student_updated = "updated_at" in student_cols
+            photo_cols = self._get_table_columns("face_training_photos")
+            target_year = self.db.execute_query(
+                "SELECT year_name FROM academic_year WHERE academic_year_id = %s",
+                (to_academic_year_id,),
+            ) or []
+            target_label = str((target_year[0] if target_year else {}).get("year_name") or to_academic_year_id)
+            suffix = f"-A{re.sub(r'[^0-9A-Za-z]+', '', target_label) or to_academic_year_id}"[:18]
+            copied_student_ids = []
+            skipped_student_ids = []
 
             connection = self.db.get_connection()
             cursor = connection.cursor()
+            read_cursor = connection.cursor(dictionary=True)
             try:
                 connection.start_transaction()
-                chunk_size = 500
 
-                for i in range(0, len(moved_student_ids), chunk_size):
-                    chunk = moved_student_ids[i:i + chunk_size]
-                    placeholders = ",".join(["%s"] * len(chunk))
+                student_insert_columns = [
+                    column for column in [
+                        "student_number",
+                        "firstname",
+                        "lastname",
+                        "postnom",
+                        "email",
+                        "phone_number",
+                        "passport_photo_path",
+                        "passport_photo_blob",
+                        "promotion_id",
+                        "academic_year_id",
+                        "password_hash",
+                        "face_encoding",
+                        "is_active",
+                    ]
+                    if column in student_cols
+                ]
+                student_insert_sql = f"INSERT INTO student ({', '.join(student_insert_columns)}) VALUES ({', '.join(['%s'] * len(student_insert_columns))})"
 
-                    if has_student_updated:
-                        query_update_students = f"""
-                            UPDATE student
-                            SET academic_year_id = %s,
-                                updated_at = NOW()
-                            WHERE id IN ({placeholders})
-                        """
-                        cursor.execute(query_update_students, (to_academic_year_id, *chunk))
-                    else:
-                        query_update_students = f"""
-                            UPDATE student
-                            SET academic_year_id = %s
-                            WHERE id IN ({placeholders})
-                        """
-                        cursor.execute(query_update_students, (to_academic_year_id, *chunk))
+                for candidate in candidates:
+                    source_id = int(candidate["id"])
+                    source_number = str(candidate.get("student_number") or source_id)
+                    copied_number = self._copy_student_number(source_number, suffix)
+                    cursor.execute("SELECT id FROM student WHERE student_number = %s", (copied_number,))
+                    if cursor.fetchone():
+                        skipped_student_ids.append(source_id)
+                        continue
+
+                    student_values = []
+                    for column in student_insert_columns:
+                        if column == "student_number":
+                            student_values.append(copied_number)
+                        elif column == "academic_year_id":
+                            student_values.append(to_academic_year_id)
+                        elif column == "is_active":
+                            student_values.append(1)
+                        elif column == "password_hash":
+                            student_values.append(candidate.get(column) or "")
+                        else:
+                            student_values.append(candidate.get(column))
+
+                    cursor.execute(student_insert_sql, tuple(student_values))
+                    copied_student_id = cursor.lastrowid
+                    copied_student_ids.append(int(copied_student_id))
 
                     if has_fp:
-                        # Réinscription réelle: remettre la situation financière à zéro
-                        # et recalculer seuil/frais depuis la promotion courante.
-                        set_parts = ["fp.academic_year_id = %s"]
-                        params = [to_academic_year_id]
+                        finance_insert_columns = [
+                            column for column in [
+                                "student_id",
+                                "amount_paid",
+                                "threshold_required",
+                                "last_payment_date",
+                                "is_eligible",
+                                "academic_year_id",
+                                "access_code_issued_at",
+                                "access_code_expires_at",
+                                "access_code_type",
+                                "final_fee",
+                                "created_at",
+                                "updated_at",
+                            ]
+                            if column in finance_cols
+                        ]
+                        if finance_insert_columns:
+                            finance_insert_sql = f"INSERT INTO finance_profile ({', '.join(finance_insert_columns)}) VALUES ({', '.join(['%s'] * len(finance_insert_columns))})"
+                            now = datetime.now()
+                            finance_values = []
+                            for column in finance_insert_columns:
+                                if column == "student_id":
+                                    finance_values.append(copied_student_id)
+                                elif column == "amount_paid":
+                                    finance_values.append("0")
+                                elif column == "threshold_required":
+                                    finance_values.append(str(candidate.get("copy_threshold_amount") or 0))
+                                elif column == "last_payment_date":
+                                    finance_values.append(None)
+                                elif column == "is_eligible":
+                                    finance_values.append(0)
+                                elif column == "academic_year_id":
+                                    finance_values.append(to_academic_year_id)
+                                elif column in {"access_code_issued_at", "access_code_expires_at", "access_code_type"}:
+                                    finance_values.append(None)
+                                elif column == "final_fee":
+                                    finance_values.append(str(candidate.get("copy_final_fee") or 0))
+                                elif column in {"created_at", "updated_at"}:
+                                    finance_values.append(now)
+                            cursor.execute(finance_insert_sql, tuple(finance_values))
 
-                        if "amount_paid" in finance_cols:
-                            set_parts.append("fp.amount_paid = 0")
-                        if "is_eligible" in finance_cols:
-                            set_parts.append("fp.is_eligible = 0")
-                        if "last_payment_date" in finance_cols:
-                            set_parts.append("fp.last_payment_date = NULL")
-                        if "threshold_required" in finance_cols:
-                            set_parts.append("fp.threshold_required = COALESCE(p.threshold_amount, 0)")
-                        if "final_fee" in finance_cols:
-                            set_parts.append("fp.final_fee = COALESCE(p.fee_usd, 0)")
-
-                        # Invalider toute trace d'ancien code côté profil
-                        if "access_code_type" in finance_cols:
-                            set_parts.append("fp.access_code_type = NULL")
-                        if "access_code_issued_at" in finance_cols:
-                            set_parts.append("fp.access_code_issued_at = NULL")
-                        if "access_code_expires_at" in finance_cols:
-                            set_parts.append("fp.access_code_expires_at = NULL")
-                        if "updated_at" in finance_cols:
-                            set_parts.append("fp.updated_at = NOW()")
-
-                        query_update_finance = f"""
-                            UPDATE finance_profile fp
-                            JOIN student s ON s.id = fp.student_id
-                            LEFT JOIN promotion p ON p.id = s.promotion_id
-                            SET {', '.join(set_parts)}
-                            WHERE fp.student_id IN ({placeholders})
-                        """
-                        cursor.execute(query_update_finance, (*params, *chunk))
-
-                    # Invalider tous les anciens codes d'accès des étudiants migrés.
-                    # Règle métier: année cible = nouvelle inscription => nouveaux paiements => nouveaux codes.
-                    query_delete_codes = f"""
-                        DELETE FROM access_code_history
-                        WHERE student_id IN ({placeholders})
-                    """
-                    cursor.execute(query_delete_codes, tuple(chunk))
-
-                    # Optionnel: supprimer aussi le hash mot de passe dérivé des anciens codes
-                    query_clear_pwd = f"""
-                        UPDATE student
-                        SET password_hash = NULL
-                        WHERE id IN ({placeholders})
-                    """
-                    cursor.execute(query_clear_pwd, tuple(chunk))
+                    photo_insert_columns = [
+                        column for column in [
+                            "student_id",
+                            "photo_path",
+                            "photo_blob",
+                            "is_primary",
+                            "is_active",
+                            "quality_score",
+                            "created_at",
+                            "updated_at",
+                        ]
+                        if column in photo_cols
+                    ]
+                    if photo_insert_columns:
+                        photo_insert_sql = f"INSERT INTO face_training_photos ({', '.join(photo_insert_columns)}) VALUES ({', '.join(['%s'] * len(photo_insert_columns))})"
+                        read_cursor.execute("SELECT * FROM face_training_photos WHERE student_id = %s", (source_id,))
+                        for photo in read_cursor.fetchall() or []:
+                            now = datetime.now()
+                            photo_values = []
+                            for column in photo_insert_columns:
+                                if column == "student_id":
+                                    photo_values.append(copied_student_id)
+                                elif column in {"created_at", "updated_at"}:
+                                    photo_values.append(now)
+                                else:
+                                    photo_values.append(photo.get(column))
+                            cursor.execute(photo_insert_sql, tuple(photo_values))
 
                 connection.commit()
             except Exception:
@@ -874,6 +957,10 @@ class StudentService:
                     pass
                 raise
             finally:
+                try:
+                    read_cursor.close()
+                except Exception:
+                    pass
                 try:
                     cursor.close()
                 except Exception:
@@ -888,15 +975,19 @@ class StudentService:
                 "Academic year migration completed: from=%s to=%s moved=%s eligible=%s",
                 from_academic_year_id,
                 to_academic_year_id,
-                len(moved_student_ids),
+                len(copied_student_ids),
                 len(eligible_student_ids),
             )
 
             return {
                 "success": True,
-                "message": "Migration effectuée.",
-                "moved_count": len(moved_student_ids),
+                "message": "Copie effectuee. Les anciens dossiers restent dans l'annee source.",
+                "moved_count": len(copied_student_ids),
+                "copied_count": len(copied_student_ids),
+                "skipped_count": len(skipped_student_ids),
                 "moved_student_ids": moved_student_ids,
+                "copied_student_ids": copied_student_ids,
+                "skipped_student_ids": skipped_student_ids,
                 "eligible_student_ids": eligible_student_ids,
                 "dry_run": False,
             }
