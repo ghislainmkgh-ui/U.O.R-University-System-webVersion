@@ -18,19 +18,23 @@ export function ReportsPage() {
   const [activeReport, setActiveReport] = useState("students");
   const [studentStatus, setStudentStatus] = useState("all");
   const [accessStatus, setAccessStatus] = useState("ALL");
-  const [limit, setLimit] = useState("200");
+  const [academicYearId, setAcademicYearId] = useState("");
   const [facultyId, setFacultyId] = useState("");
   const [departmentId, setDepartmentId] = useState("");
   const [promotionId, setPromotionId] = useState("");
   const hierarchySource = useApiResource("/api/reports/students/?status=all");
   const hierarchy = useMemo(() => buildReportHierarchy(hierarchySource.data?.students || []), [hierarchySource.data]);
+  const academicYears = useMemo(
+    () => buildAcademicYearOptions(summary.data?.academic_years, hierarchySource.data?.students || []),
+    [summary.data, hierarchySource.data],
+  );
   const selectedFaculty = hierarchy.find((faculty) => String(faculty.id) === String(facultyId));
   const departments = selectedFaculty?.departments || [];
   const selectedDepartment = departments.find((department) => String(department.id) === String(departmentId));
   const promotions = selectedDepartment?.promotions || [];
   const reportPath = useMemo(
-    () => buildReportPath(activeReport, studentStatus, accessStatus, limit, facultyId, departmentId, promotionId),
-    [activeReport, studentStatus, accessStatus, limit, facultyId, departmentId, promotionId],
+    () => buildReportPath(activeReport, studentStatus, accessStatus, academicYearId, facultyId, departmentId, promotionId),
+    [activeReport, studentStatus, accessStatus, academicYearId, facultyId, departmentId, promotionId],
   );
   const report = useApiResource(reportPath);
   const rows = activeReport === "access" ? report.data?.access_logs || [] : report.data?.students || [];
@@ -67,6 +71,18 @@ export function ReportsPage() {
             <h2>{reports.find((item) => item.key === activeReport)?.label}</h2>
             <span>{rows.length} ligne(s) dans l'apercu</span>
           </div>
+
+          <label>
+            Annee academique
+            <select value={academicYearId} onChange={(event) => setAcademicYearId(event.target.value)}>
+              <option value="">Toutes</option>
+              {academicYears.map((year) => (
+                <option key={year.id} value={year.id}>
+                  {year.name}{year.is_active ? " - active" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
 
           {activeReport !== "access" ? (
             <label>
@@ -120,18 +136,6 @@ export function ReportsPage() {
                 </select>
               </label>
             </>
-          )}
-
-          {activeReport !== "students" && (
-            <label>
-              Limite
-              <select value={limit} onChange={(event) => setLimit(event.target.value)}>
-                <option value="100">100</option>
-                <option value="200">200</option>
-                <option value="500">500</option>
-                <option value="1000">1000</option>
-              </select>
-            </label>
           )}
 
           <button className="primary-button" onClick={() => downloadApiFile(exportPath(reportPath, "csv"), exportName(activeReport, "csv"))}>
@@ -264,15 +268,16 @@ function AccessReportTable({ rows }) {
   );
 }
 
-function buildReportPath(activeReport, studentStatus, accessStatus, limit, facultyId, departmentId, promotionId) {
+function buildReportPath(activeReport, studentStatus, accessStatus, academicYearId, facultyId, departmentId, promotionId) {
+  const yearQuery = academicYearId ? `&academic_year_id=${encodeURIComponent(academicYearId)}` : "";
   const hierarchyQuery = activeReport !== "access" ? hierarchyParams(facultyId, departmentId, promotionId) : "";
   if (activeReport === "finance") {
-    return `/api/reports/finance/?limit=${encodeURIComponent(limit)}&status=${encodeURIComponent(studentStatus)}${hierarchyQuery}`;
+    return `/api/reports/finance/?status=${encodeURIComponent(studentStatus)}${yearQuery}${hierarchyQuery}`;
   }
   if (activeReport === "access") {
-    return `/api/reports/access-logs/?limit=${encodeURIComponent(limit)}&status=${encodeURIComponent(accessStatus)}`;
+    return `/api/reports/access-logs/?status=${encodeURIComponent(accessStatus)}${yearQuery}`;
   }
-  return `/api/reports/students/?status=${encodeURIComponent(studentStatus)}${hierarchyQuery}`;
+  return `/api/reports/students/?status=${encodeURIComponent(studentStatus)}${yearQuery}${hierarchyQuery}`;
 }
 
 function hierarchyParams(facultyId, departmentId, promotionId) {
@@ -321,6 +326,33 @@ function buildReportHierarchy(rows) {
       promotions: Array.from(department.promotions.values()),
     })),
   }));
+}
+
+function buildAcademicYearOptions(yearRows, reportRows) {
+  const map = new Map();
+  (Array.isArray(yearRows) ? yearRows : []).forEach((year) => {
+    const id = year.academic_year_id || year.id;
+    if (!id) return;
+    map.set(String(id), {
+      id,
+      name: year.year_name || year.name || `Annee ${id}`,
+      is_active: isActiveYear(year),
+    });
+  });
+  (Array.isArray(reportRows) ? reportRows : []).forEach((row) => {
+    const id = row.academic_year_id;
+    if (!id || map.has(String(id))) return;
+    map.set(String(id), {
+      id,
+      name: row.academic_year_name || row.year_name || `Annee ${id}`,
+      is_active: row.academic_year_is_active === true || row.academic_year_is_active === 1,
+    });
+  });
+  return Array.from(map.values()).sort((a, b) => Number(b.is_active) - Number(a.is_active) || a.name.localeCompare(b.name, "fr"));
+}
+
+function isActiveYear(year) {
+  return year?.is_active === true || year?.is_active === 1 || String(year?.is_active).toLowerCase() === "true";
 }
 
 function studentName(row) {

@@ -91,13 +91,16 @@ def resend_access_code(request: HttpRequest, student_id: int) -> JsonResponse:
 
 
 @api_methods("GET", "POST")
-@elevated_admin_required
+@admin_required
 def academic_years(request: HttpRequest) -> JsonResponse:
     svc = _academic()
     if request.method == "GET":
         include_financials = str(request.GET.get("financials") or "").lower() == "true"
         rows = svc.get_years_financials() if include_financials else svc.get_years()
         return json_ok(rows or [])
+
+    if not _has_elevated_role(request):
+        return json_error("Acces refuse", status=403, code="forbidden")
 
     payload, error = parse_json(request)
     if error:
@@ -350,6 +353,11 @@ def _bool_or_none(value) -> bool | None:
     if raw in {"0", "false", "no", "non", "inactive", "inactif"}:
         return False
     return None
+
+
+def _has_elevated_role(request: HttpRequest) -> bool:
+    role = str((getattr(request, "current_user", {}) or {}).get("role") or "").lower()
+    return role in {"admin", "super_admin"}
 
 
 def _access_code_resend_message(detail: str) -> str:

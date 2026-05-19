@@ -326,19 +326,32 @@ class DashboardService:
             logger.error(f"Erreur finance_overview: {e}")
             return []
 
-    def get_access_logs_with_students(self, limit: int = 200) -> list:
+    def get_access_logs_with_students(self, limit: int = 200, academic_year_id: int = None) -> list:
         """Liste des logs d'accès avec photo étudiant"""
         if not self.db_connection:
             return []
         try:
             db = self.db_connection.get_connection()
             cursor = db.cursor(dictionary=True)
+            try:
+                safe_limit = max(1, min(5000, int(limit)))
+            except Exception:
+                safe_limit = 200
+            where_clauses = []
+            params = []
+            if academic_year_id:
+                where_clauses.append("s.academic_year_id = %s")
+                params.append(int(academic_year_id))
+            where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+
             cursor.execute(f"""
                 SELECT
                     s.id,
                     s.student_number,
                     s.firstname,
                     s.lastname,
+                    s.academic_year_id,
+                    ay.year_name AS academic_year_name,
                     s.passport_photo_path,
                     s.passport_photo_blob,
                     al.access_point,
@@ -349,9 +362,11 @@ class DashboardService:
                     al.created_at
                 FROM access_log al
                 JOIN student s ON al.student_id = s.id
+                LEFT JOIN academic_year ay ON ay.academic_year_id = s.academic_year_id
+                {where_sql}
                 ORDER BY al.created_at DESC
-                LIMIT {limit}
-            """)
+                LIMIT {safe_limit}
+            """, tuple(params))
             rows = cursor.fetchall() or []
             cursor.close()
             db.close()

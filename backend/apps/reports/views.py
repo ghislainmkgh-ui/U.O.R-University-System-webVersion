@@ -18,10 +18,15 @@ def _students():
     return services()["student"]
 
 
+def _academic():
+    return services()["academic"]
+
+
 @api_methods("GET")
 @admin_required
 def summary(request: HttpRequest) -> JsonResponse:
     dashboard = _dashboard()
+    academic_years = _academic().get_years() or []
     return json_ok(
         {
             "total_students": dashboard.get_total_students(),
@@ -36,6 +41,7 @@ def summary(request: HttpRequest) -> JsonResponse:
                 "access_logs",
             ],
             "available_formats": ["json", "csv", "excel", "pdf"],
+            "academic_years": academic_years,
         }
     )
 
@@ -45,6 +51,7 @@ def summary(request: HttpRequest) -> JsonResponse:
 def students_report(request: HttpRequest):
     rows = _students().get_all_students_with_finance() or []
     rows = [_add_report_flags(add_photo_flags(row)) for row in rows]
+    rows = _filter_by_academic_year(rows, request)
     rows = _filter_students(rows, request.GET.get("status"))
     rows = _filter_by_ids(rows, request)
 
@@ -57,9 +64,9 @@ def students_report(request: HttpRequest):
 @api_methods("GET")
 @admin_required
 def finance_report(request: HttpRequest):
-    limit = _safe_int(request.GET.get("limit"), default=500, minimum=1, maximum=2000)
-    rows = _dashboard().get_students_finance_overview(limit) or []
+    rows = _students().get_all_students_with_finance() or []
     rows = [_add_report_flags(add_photo_flags(row)) for row in rows]
+    rows = _filter_by_academic_year(rows, request)
     rows = _filter_students(rows, request.GET.get("status"))
     rows = _filter_by_ids(rows, request)
 
@@ -72,9 +79,10 @@ def finance_report(request: HttpRequest):
 @api_methods("GET")
 @admin_required
 def access_logs_report(request: HttpRequest):
-    limit = _safe_int(request.GET.get("limit"), default=500, minimum=1, maximum=2000)
-    rows = _dashboard().get_access_logs_with_students(limit) or []
+    limit = _safe_int(request.GET.get("limit"), default=2000, minimum=1, maximum=5000)
+    rows = _dashboard().get_access_logs_with_students(limit, academic_year_id=_safe_int_or_none(request.GET.get("academic_year_id"))) or []
     rows = [add_photo_flags(row) for row in rows]
+    rows = _filter_by_academic_year(rows, request)
     rows = _filter_access_logs(rows, request.GET.get("status"))
 
     export = export_response("uor_access_logs_report", rows, _access_log_columns(), requested_format(request))
@@ -111,6 +119,13 @@ def _filter_by_ids(rows: list[dict], request: HttpRequest) -> list[dict]:
     return filtered
 
 
+def _filter_by_academic_year(rows: list[dict], request: HttpRequest) -> list[dict]:
+    academic_year_id = request.GET.get("academic_year_id")
+    if academic_year_id in (None, ""):
+        return rows
+    return [row for row in rows if str(row.get("academic_year_id") or "") == str(academic_year_id)]
+
+
 def _filter_access_logs(rows: list[dict], status: str | None) -> list[dict]:
     status = str(status or "all").strip().upper()
     if status in {"ALL", ""}:
@@ -138,6 +153,13 @@ def _safe_int(value, *, default: int, minimum: int, maximum: int) -> int:
         return max(minimum, min(maximum, int(value)))
     except Exception:
         return default
+
+
+def _safe_int_or_none(value) -> int | None:
+    try:
+        return int(value) if value not in (None, "") else None
+    except Exception:
+        return None
 
 
 def _student_columns() -> list[tuple[str, str]]:
